@@ -144,7 +144,7 @@ mod test_perl_original {
 
         // -> compare result with predicted
         // assert_eq!(string_result, "HW, 1+1 = 2\n");
-        assert_eq!(string_result, "Hello,Perl!\n");
+        assert_eq!(string_result, "Hello,Perl!");
 
     }
 }
