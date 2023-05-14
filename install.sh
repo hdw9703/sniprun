@@ -9,8 +9,8 @@ force_build=$1
 cargo_build() {
   if command -v cargo >/dev/null; then
     echo "Building sniprun from source..."
-    cargo build --release &>/dev/null
-    echo "Done"
+    cargo build --release 2>&1
+    echo "Done (status: $?)"
     return 0
   else
     echo "Could not find cargo in \$PATH: the Rust toolchain is required to build Sniprun"

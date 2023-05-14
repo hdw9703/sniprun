@@ -1,5 +1,40 @@
+## v1.3.2
+- Quality-of-life fixes courtesy of @zhengpd
+- Keep terminal display open by default
+
+## v1.3.1
+- Fix SnipInfo on some Mac
+- Fix :help sniprun
+
+## v1.3.0
+- Compatibility with virtually **any** language through a revamped generic interpreter
+- OCaml official support (bloc-level, REPL)
+- Misc coding style improvements
+
+## v1.2.13
+- Fix broken snipinfo on NixOS
+- Document install on NixOS
+
+## v1.2.12
+- Fix (broken) SnipLive
+
+## v1.2.11
+- Fix python3_fifo issue with try/catch
+- Fix deno's REPL ANSI color code appearing in result
+
+## v1.2.10
+- Neorg support
+- Support for named code blocs (neorg, orgmode)
+- Allow setting custom locations for the sniprun binary
+
+## v1.2.9
+- Elixir support (with REPL capabilities)
+- C# support
+- "--project"-aware Julia interpreter
+- Fixed Julia REPL capabilities (fifo in Julia_original, in addition to Julia_jupyter)
+
 ## v1.2.8
-- remove SnipTerminate
+- Remove SnipTerminate
 - Python_fifo3 fixes for indentation issues
 - HTML doc deployed from github pages
 - Composable/filterable display options

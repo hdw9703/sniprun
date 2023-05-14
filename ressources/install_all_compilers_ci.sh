@@ -2,6 +2,11 @@ sudo add-apt-repository ppa:neovim-ppa/stable -y
 sudo apt-get update
 sudo apt-get install neovim # install neovim 0.5+
 
+if ! command -v ocaml &> /dev/null
+then
+    sudo apt-get install ocaml
+fi
+
 if ! command -v ghc &> /dev/null
 then
     sudo apt-get install haskell-platform -y
@@ -70,10 +75,20 @@ then
 fi
 
 
+
 if ! command -v go &> /dev/null
 then
     ./ressources/go_install.sh 
     export PATH=$PATH:$HOME/golang/go/bin/
+fi
+
+if ! command -v mono &> /dev/null 
+then
+    sudo apt-get install dirmngr gnupg apt-transport-https ca-certificates -y
+    sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+    sudo apt-add-repository 'deb <a href="https://download.mono-project.com/repo/ubuntu">https://download.mono-project.com/repo/ubuntu</a> stable-bionic main'
+    sudo apt-get update
+    sudo apt-get install mono-complete -y
 fi
 
 # deno for typescript and javascript

@@ -35,8 +35,12 @@ M.config_values = {
   live_display = { "VirtualTextOk" }, -- displayed only for live mode
 
   display_options = {
-    terminal_width = 45,       -- change the terminal display option width
-    notification_timeout = 5   -- timeout for nvim_notify output
+    terminal_scrollback = vim.o.scrollback, -- change terminal display scrollback lines
+    terminal_line_number = false, -- whether show line number in terminal window
+    terminal_signcolumn = false,  -- whether show signcolumn in terminal window
+    terminal_width = 45,          -- change the terminal display option width
+    terminal_persistence = true,  -- always keep the terminal open (true) or close it at every occasion (false)
+    notification_timeout = 5      -- timeout for nvim_notify output
   },
 
   show_no_output = {
@@ -49,9 +53,9 @@ M.config_values = {
 
   -- default highlight stuff goes here
   snipruncolors = {
-    SniprunVirtualTextOk   =  {bg="#66eeff",fg="#000000",ctermbg="Cyan",cterfg="Black"},
+    SniprunVirtualTextOk   =  {bg="#66eeff",fg="#000000",ctermbg="Cyan",ctermfg="Black"},
     SniprunFloatingWinOk   =  {fg="#66eeff",ctermfg="Cyan"},
-    SniprunVirtualTextErr  =  {bg="#881515",fg="#000000",ctermbg="DarkRed",cterfg="Black"},
+    SniprunVirtualTextErr  =  {bg="#881515",fg="#000000",ctermbg="DarkRed",ctermfg="Black"},
     SniprunFloatingWinErr  =  {fg="#881515",ctermfg="DarkRed"},
   },
 
@@ -59,8 +63,10 @@ M.config_values = {
   -- by an user that would be unaware of the potentially dangerous behavior
   live_mode_toggle='off',
 
-  -- auto-filled with the real nvim's PID
-  neovim_pid=0
+  -- auto-filled with the real nvim's PID, sniprun's bin and source locations
+  neovim_pid=0,
+  binary_path=binary_path,
+  sniprun_path=sniprun_path,
 
 }
 
@@ -78,6 +84,8 @@ end
 
 function M.setup(opts)
   opts = opts or {}
+
+  -- pre-process config keys
   for key,value in pairs(opts) do
     if M.config_values[key] == nil then
       error(string.format('[Sniprun] Key %s does not exist in config values',key))
@@ -89,8 +97,11 @@ function M.setup(opts)
     if key == 'live_mode_toggle' and opts[key] == 'enable' then
       require('sniprun.live_mode')
     end
-    M.config_values[key] = value
   end
+
+  -- merge user config into default config values
+  M.config_values = vim.tbl_deep_extend("force", M.config_values, opts)
+
   M.configure_keymaps()
   M.setup_highlights()
   M.setup_autocommands()
@@ -163,7 +174,13 @@ function M.setup_autocommands()
   vim.cmd("function! Sniprun_close_term_on_leave()\n lua require'sniprun.display'.term_close()\n endfunction")
   vim.cmd("augroup sniprun_close_term")
   vim.cmd("autocmd!")
-  vim.cmd("autocmd VimLeave,QuitPre,BufWinLeave ?* call Sniprun_close_term_on_leave()")
+  vim.cmd("autocmd VimLeave,QuitPre ?* call Sniprun_close_term_on_leave()")
+  vim.cmd("augroup END")
+
+  vim.cmd("function! Sniprun_close_term_on_bufleave()\n lua require'sniprun.display'.term_autoclose()\n endfunction")
+  vim.cmd("augroup sniprun_close_term")
+  vim.cmd("autocmd!")
+  vim.cmd("autocmd BufWinLeave ?* call Sniprun_close_term_on_bufleave()")
   vim.cmd("augroup END")
 end
 
@@ -183,7 +200,7 @@ function M.configure_keymaps()
   vim.cmd("function! SnipRunOperator(...) \n lua require'sniprun'.run('n') \n endfunction")
   vim.cmd("command! SnipClose :lua require'sniprun.display'.close_all()")
 
-  vim.cmd("function! ListInterpreters(A,L,P) \n let l = split(globpath('"..sniprun_path.."/docs/sources/interpreters', '*.md'),'\\n') \n let rl = [] \n for e in l \n let rl += [split(e,'/')[-1][:-4]] \n endfor \n return rl \n endfunction")
+  vim.cmd("function! ListInterpreters(A,L,P) \n let l = split(globpath('".. M.config_values.sniprun_path .."/docs/sources/interpreters', '*.md'),'\\n') \n let rl = [] \n for e in l \n let rl += [split(e,'/')[-1][:-4]] \n endfor \n return rl \n endfunction")
   vim.cmd("command! -nargs=* -complete=customlist,ListInterpreters SnipInfo :lua require'sniprun'.info(<q-args>)")
 
   vim.cmd("function! SnipRunLauncher(...) range \nif a:firstline == a:lastline \n lua require'sniprun'.run() \n elseif a:firstline == 1 && a:lastline == line(\"$\")\nlet g:sniprun_cli_args_list = a:000\n let g:sniprun_cli_args = join(g:sniprun_cli_args_list,\" \") \n lua require'sniprun'.run('w') \n else \n lua require'sniprun'.run('v') \n endif \n endfunction")
@@ -194,7 +211,7 @@ end
 
 function M.start()
   if M.job_id ~= nil then return end
-  M.job_id = vim.fn.jobstart({ binary_path }, { rpc = true })
+  M.job_id = vim.fn.jobstart({ M.config_values.binary_path }, { rpc = true })
 end
 
 function M.notify(method, ...)
@@ -209,7 +226,7 @@ end
 
 function M.run(mode)
   local range_begin, range_end = M.get_range(mode)
-  M.config_values["sniprun_root_dir"] = sniprun_path
+  M.config_values["sniprun_root_dir"] = M.config_values.sniprun_path
   M.notify('run', range_begin, range_end, M.config_values, vim.g.sniprun_cli_args or "" )
 end
 
@@ -290,19 +307,37 @@ function M.display_lines_in_floating_win(lines)
 	-- vim.api.nvim_buf_add_highlight(M.info_floatwin.buf, namespace_id, hl, h,0,-1) -- highlight lines in floating window
 end
 
+function dir_exists(path)
+   local ok, err, code = os.rename(path, path)
+   if not ok then
+      if code == 13 then
+         -- Permission denied, but it exists
+         return true
+      end
+   end
+   return ok, err
+end
 
 function M.info(arg)
   if arg == nil or arg == "" then
-    M.config_values["sniprun_root_dir"] = sniprun_path
+    M.config_values["sniprun_root_dir"] = M.config_values.sniprun_path
     M.notify("info",1,1,M.config_values, "")
 
     vim.wait(500) -- let enough time for the sniprun binary to generate the file
     print(" ")
-    local lines = lines_from(sniprun_path.."/ressources/infofile.txt")
+    -- default cache dir is different on Linux and MacOS
+    local default_cache_dir = os.getenv("HOME").."/.cache"
+    if dir_exists(os.getenv("HOME").."/Library/Caches") then -- we're (probably) on MacOS
+        default_cache_dir = os.getenv("HOME").."/Library/Caches"
+    end
+
+    local cache_dir = os.getenv("XDG_CACHE_HOME") or default_cache_dir
+    local sniprun_cache_dir = cache_dir.."/sniprun"
+    local lines = lines_from(sniprun_cache_dir.."/infofile.txt")
     -- print all lines content
     M.display_lines_in_floating_win(lines)
     else --help about a particular interpreter
-      local lines = lines_from(sniprun_path.."/docs/sources/interpreters/"..string.gsub(arg,"%s+","")..".md")
+      local lines = lines_from(M.config_values.sniprun_path.."/docs/sources/interpreters/"..string.gsub(arg,"%s+","")..".md")
       M.display_lines_in_floating_win(lines)
   end
 end
@@ -317,16 +352,19 @@ function M.health()
   if vim.fn.executable('cargo') == 0 then health_warn("Rust toolchain not available", {"[optionnal] Install the rust toolchain https://www.rust-lang.org/tools/install"})
   else health_ok("Rust toolchain found") end
 
-  if vim.fn.executable(binary_path) == 0 then health_error("sniprun binary not found!")
-  else health_ok("sniprun binary found at "..binary_path) end
+  if vim.fn.executable(M.config_values.binary_path) == 0 then health_error("sniprun binary not found!")
+  else health_ok("sniprun binary found at ".. M.config_values.binary_path) end
 
   local terminate_after = M.job_id == nil
   local path_log_file = os.getenv('HOME').."/.cache/sniprun/sniprun.log"
   local path_log_file_mac = os.getenv('HOME').."/Library/Caches/sniprun/sniprun.log"
-  -- os.remove(path_log_file)
+  os.remove(path_log_file)
 
   -- check if the log is recreated
-  M.ping()
+  if pcall(M.ping) then health_ok("Sent a ping to the sniprun binary")
+  else health_warn("Could not send a ping to the sniprun binary - is it present, executable and compatible with your CPU architecture?") end
+    
+
   os.execute("sleep 0.2")
   if not M.file_exists(path_log_file) and not M.file_exists(path_log_file_mac)  then health_error("sniprun binary incompatible or crash at start", {"Compile sniprun locally, with a clean reinstall and 'bash ./install.sh 1' as post-install command."})
   else health_ok("sniprun binary runs correctly")

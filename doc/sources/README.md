@@ -71,17 +71,15 @@ Sniprun will then:
 
 ## Prerequisites && dependencies
 
-- Sniprun is compatible with **Linux** and **MacOS**. (Mac users _need_ the Rust [toolchain](https://www.rust-lang.org/tools/install)) >= 1.59
+- Sniprun is compatible with **Linux** and **MacOS**. (NixOS and Mac users _need_ the Rust [toolchain](https://www.rust-lang.org/tools/install) version >= 1.59 ). Standard POSIX utilities (grep, cut, sed ...) may be needed too, depending on the languages you want support for.
 
 - **Neovim** version >= 0.5
+
+- **Compiler / interpreter** for the languages you work with must be installed & on your \$PATH. In case specific build tools or softwares are required, those are documented in the navigation pane of the [wiki](https://michaelb.github.io/sniprun/), as well as in the [doc/sources/interpreters](https://github.com/michaelb/sniprun/tree/master/doc/sources/interpreters) folder, for each interpreter, which I urge you to get a look at before getting started as it also contains the potential limitations of each interpreter; this information can be accessed through `:SnipInfo <interpreter_name>` (tab autocompletion supported).
 
 - [optional] **cargo and the rust toolchain** version >= 1.59 (you can find those [here](https://www.rust-lang.org/tools/install)).
 
 - [optional] the plugin [nvim-notify](https://github.com/rcarriga/nvim-notify) for the notification display style
-
-- **Compiler / interpreter** for the languages you work with must be installed & on your \$PATH. In case specific build tools or softwares are required, those are documented in the [docs/sources/interpreters](https://github.com/michaelb/sniprun/tree/master/doc) folder, for each interpreter, which I urge you to get a look at before getting started as it also contains the potential limitations of each interpreter; this information can be accessed through `:SnipInfo <interpreter_name>` (tab autocompletion supported).
-
-
 
 ## Install Sniprun
 
@@ -89,11 +87,11 @@ Sniprun will then:
 
 (Run `install.sh` as a post-installation script, it will download or compile the sniprun binary)
 
-<details open><summary>vim-plug</summary>
+<details><summary>vim-plug</summary>
 <p>
 
 ```vim
-Plug 'michaelb/sniprun', {'do': 'bash install.sh'}
+Plug 'michaelb/sniprun', {'do': 'bash ./install.sh'}
 " 'bash install.sh 1' to get the bleeding edge or if you have trouble with the precompiled binary,
 "  but you'll compile sniprun at every update & will need the rust toolchain
 ```
@@ -102,25 +100,18 @@ Plug 'michaelb/sniprun', {'do': 'bash install.sh'}
 </p>
 
 
-<details><summary>packer</summary>
+<details open><summary>packer</summary>
 <p>
 
 ```
   use { 'michaelb/sniprun', run = 'bash ./install.sh'}
 ```
+
+(or likewise, `'bash ./install.sh 1'` to get the bleeding edge aka compile yourself the latest commit of sniprun)
+
 </details>
 </p>
 
-
-
-### Or install from the AUR
-
-![](https://img.shields.io/aur/maintainer/sniprun)
-<a href="https://aur.archlinux.org/packages/neovim-sniprun/">
-  <img alt="AUR last modified" src="https://img.shields.io/aur/last-modified/sniprun?label=AUR%20package%20updated"/>
-</a>
-
-An independently maintained [AUR package](https://aur.archlinux.org/packages/neovim-sniprun/) is available for Arch users.
 
 
 ### or install sniprun manually
@@ -128,6 +119,28 @@ An independently maintained [AUR package](https://aur.archlinux.org/packages/neo
 
 I trust you know how to add a plugin to the runtimepath, just don't forget to run `./install.sh`, or alternatively, `cargo build --release` to fetch/build the binary.
 
+### or for NixOS users
+
+#### with home-manager
+
+Sniprun is packaged for NixOS, so install ['as usual'](https://nix-community.github.io/home-manager/options.html#opt-programs.neovim.plugins), aka just add sniprun to your programs.neovim.plugins .
+
+#### with a standard Lua config
+
+The normal installation way will work, as long as you compile locally the sniprun binary; example with packer
+
+ `use { 'michaelb/sniprun', run = 'bash ./install.sh 1'}`
+
+#### you do nothing like everyone else
+
+- Have a running sniprun binary somewhere (it should be runnable on the command-line, though it will just 'hang')
+- Have the repo added to neovim's runtimepath (for debugging: `nvim --cmd "set rtp+=/path/to/sniprun/repo"`)
+- Configure sniprun to get the correct location (by default, **from the repo**: ./target/release/sniprun)
+```
+require('sniprun').setup({
+    binary_path="/path/to/your/sniprun",
+})
+```
 
 # Usage
 
@@ -143,13 +156,6 @@ You can do basically two things: **run** your code selection and **stop** it (in
 ```vim
 :SnipRun
 ```
-OR
-
-```
-:lua require'sniprun'.run()
-```
-("the first command is only a shorthand, you should
-configure the <Plug>SnipRun {ref}`mappings <mapping>`),
 
 **Running 'live'** (aka running the current line as you're typing is possible, but it's very important to read the warnings about this, so I'm keeping the instructions in {ref}`another chapter <livemode>`.
 
@@ -169,18 +175,14 @@ Configure a mapping to `<Plug>SnipRunOperator` and combine it with movements to 
 _ARGHHH_ I Sniprun'd an infinite loop (or anything that takes too long, or will crash, or anything)!
 No worries, the second and last command will kill everything Sniprun ran so far:
 
-```vim
- :SnipReset
-```
+`:SnipReset`
+
 Alternatively, exit & re-enter Neovim.
 
 ## Clearing
 You may want to clear virtual text, close a terminal or a floating window created by Sniprun: for this, one command to rule them all:
 
 `:SnipClose`
-
-(plug mapping : `<Plug>SnipClose`)
-
 
 
 ## REPL-like behavior
@@ -192,8 +194,7 @@ This is easier/cleaner to implement on interpreted languages, but **compiled lan
 Many interpreted languages will have this behavior enabled or disabled by default, you can change this with the
 `repl_enable = { 'Interpreter_name', 'Another_one' }` and `repl_disable = {'Disabled_interpreter'}` keys in the configuration. Relevant info is available in `:SnipInfo` / `:SnipInfo <name> `
 
-
-Hopefully, if something does not work, or if the 'memory' is corrupted by bad code you can clear the REPL memory with `:SnipReplMemoryClean` that is a faster and less error-prone alternative to `:SnipReset` for this use case.
+If something does not work, or if the 'memory' is corrupted by bad code you can clear the REPL memory with `:SnipReplMemoryClean` that is a faster and less error-prone alternative to `:SnipReset` for this use case.
 
 # Configuration
 
@@ -208,7 +209,7 @@ require'sniprun'.setup({
   repl_enable = {},               --# enable REPL-like behavior for the given interpreters
   repl_disable = {},              --# disable REPL-like behavior for the given interpreters
 
-  interpreter_options = {         --# interpreter-specific options, see docs / :SnipInfo <name>
+  interpreter_options = {         --# interpreter-specific options, see doc / :SnipInfo <name>
 
     --# use the interpreter name as key
     GFM_original = {
@@ -240,8 +241,12 @@ require'sniprun'.setup({
   live_display = { "VirtualTextOk" }, --# display mode used in live_mode
 
   display_options = {
-    terminal_width = 45,       --# change the terminal display option width
-    notification_timeout = 5   --# timeout for nvim_notify output
+    terminal_scrollback = vim.o.scrollback, --# change terminal display scrollback lines
+    terminal_line_number = false, --# whether show line number in terminal window
+    terminal_signcolumn = false,  --# whether show signcolumn in terminal window
+    terminal_persistence = true,  --# always keep the terminal open (true) or close it at every occasion (false)
+    terminal_width = 45,          --# change the terminal display option width
+    notification_timeout = 5      --# timeout for nvim_notify output
   },
 
   --# You can use the same keys to customize whether a sniprun producing
@@ -259,13 +264,14 @@ require'sniprun'.setup({
     SniprunFloatingWinErr  =  {fg="#881515",ctermfg="DarkRed"},
   },
 
-  --# miscellaneous compatibility/adjustement settings
-  inline_messages = 0,             --# inline_message (0/1) is a one-line way to display messages
-				                   --# to workaround sniprun not being able to display anything
+  live_mode_toggle='off'      --# live mode toggle, see Usage - Running for more info   
 
-  borders = 'single',              --# display borders around floating windows
-                                   --# possible values are 'none', 'single', 'double', or 'shadow'
-  live_mode_toggle='off'           --# live mode toggle, see Usage - Running for more info   
+  --# miscellaneous compatibility/adjustement settings
+  inline_messages = false,    --# boolean toggle for a one-line way to display messages
+                              --# to workaround sniprun not being able to display anything
+
+  borders = 'single',         --# display borders around floating windows
+                              --# possible values are 'none', 'single', 'double', or 'shadow'
 })
 EOF
 ```
@@ -305,9 +311,9 @@ All of sniprun functionalities:
 <p>
 
 ```
-vim.api.nvim\_set\_keymap('v', 'f', '<Plug>SnipRun', {silent = true})
-vim.api.nvim\_set\_keymap('n', '<leader>f', '<Plug>SnipRunOperator', {silent = true})
-vim.api.nvim\_set\_keymap('n', '<leader>ff', '<Plug>SnipRun', {silent = true})
+vim.api.nvim_set_keymap('v', 'f', '<Plug>SnipRun', {silent = true})
+vim.api.nvim_set_keymap('n', '<leader>f', '<Plug>SnipRunOperator', {silent = true})
+vim.api.nvim_set_keymap('n', '<leader>ff', '<Plug>SnipRun', {silent = true})
 ```
 </details>
 </p>
@@ -323,16 +329,16 @@ vmap f <Plug>SnipRun
 </details>
 </p>
 
-- For interpreted languages with simple output, `:%SnipRun` (or a shortcut, wrapping it with `let b:caret=winsaveview()` and `call winrestview(b:caret)` in order to keep the cursor at the current position) may be a more convenient way to run your entire file. When running the whole file, SnipRun supports taking arguments on the command line: `:%SnipRun 5 "yay"` frictionlessly for interpreted languages, and compiled languages with entry point detection implemented (most of them).
+- For interpreted languages with simple output, `:%SnipRun` (or a shortcut, wrapping it with `let b:caret=winsaveview()` and `call winrestview(b:caret)` in order to keep the cursor at the current position) may be a more convenient way to run your entire file. Example mapping `:%SnipRun` to F5: `vim.keymap.set('n', '<F5>', ":let b:caret=winsaveview() <CR> | :%SnipRun <CR>| :call winrestview(b:caret) <CR>", {})`, with my apologies for poor vimscript.
+
+When running the whole file, SnipRun supports taking arguments on the command line: `:%SnipRun 5 "yay"` frictionlessly for interpreted languages, and compiled languages with entry point detection implemented (most of them).
 
 
-While both shorthands and \<Plug> are here to stay, **please use the `<Plug>` style ones in your mappings** or if using from another plugin.
+While both shorthands and \<Plug> are here to stay, **it's better practice to use the `<Plug>` style ones in your mappings** or if using from another plugin.
 
 
 
 Sniprun synergises exceptionnally well with plugins that help you creating print/debug statements, such as [vim-printer](https://github.com/meain/vim-printer).
-
-
 
 
 (support-levels-and-languages)=
@@ -340,7 +346,7 @@ Sniprun synergises exceptionnally well with plugins that help you creating print
 
 As of writing, languages can be supported up to different extents:
 
-- **Unsupported**/**Untested** : You should not expect anything to work, except if the generic interpreter works correctly with it (at most Line level support).
+- **Unsupported**/**Untested** : [Community configs](https://michaelb.github.io/sniprun/sources/Generic.html#community-examples-for-non-officially-supported_languages) for the generic interpreter may support any language up to bloc level
 - **Line** : Code contained in a single line works, for example: `print([x**2 for x in range(10)])` . Won't work if you use a variable defined elsewhere.
 - **Bloc** : You can select any piece of code that is semantically correct (minus the eventual entry point) on its own (independently of indentation) in visual mode, and run it. A sniprun-able example, in Rust:
 
@@ -366,9 +372,11 @@ println!("-> {}", alphabet);
 | Bash/Shell   | Bloc          | Yes\*            |
 | C            | Import        | No               |
 | C++          | Import        | No               | 
+| C#           | Bloc          | No               | 
 | Clojure      | Bloc          | Yes \*\*         | 
 | Coffeescript | Bloc          | No               |   
 | D            | Bloc          | No               | 
+| Elixir       | Bloc          | Yes \*\*         |
 | F#           | Bloc          | No, but _could_ \*\* |
 | Go           | Import        | No               | 
 | Haskell      | Line          | No               | 
@@ -379,6 +387,8 @@ println!("-> {}", alphabet);
 | Lua-nvim     | Bloc          | Yes\*\*          |
 | Markdown     | Bloc          | Yes\*\*\*        |
 | Mathematica  | Bloc          | Yes\*\*          |
+| Neorg        | Bloc          | Yes\*\*\*        |
+| OCaml        | Bloc          | Yes\*\*          |
 | OrgMode      | Bloc          | Yes\*\*\*        |
 | Perl/Perl6   | Line          | No               | 
 | Python3      | Import        | Yes\*\*          |
@@ -389,9 +399,11 @@ println!("-> {}", alphabet);
 | Scala        | Bloc          | No               | 
 | TypeScript   | Bloc          | Yes\*\*   (Deno) |  
 
-Want support for your language? Submit an [issue](https://github.com/michaelb/sniprun/issues/new?assignees=&labels=new-langage-support&template=support-for--language-.md&title=), or even better, contribute (see CONTRIBUTING.md), it's easy!
+Your language is not officially supported ? The [Generic interpreter](https://michaelb.github.io/sniprun/sources/Generic.html#community-examples-for-non-officially-supported_languages) can probably work with it !
 
-\* (fake) REPL-like functionnality, with potential unwanted side-effects
+Want (official) support for your language? Submit an [issue](https://github.com/michaelb/sniprun/issues/new?assignees=&labels=new-langage-support&template=support-for--language-.md&title=),or even better, contribute (see CONTRIBUTING.md), it's easy!
+
+\* (fake) REPL-like functionality, with potential unwanted side effects
 
 \*\* True REPL under the hood
 
