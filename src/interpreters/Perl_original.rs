@@ -108,7 +108,7 @@ impl Interpreter for Perl_original {
 
     fn execute(&mut self) -> Result<String, SniprunError> {
         //run th binary and get the std output (or stderr)
-        let output = Command::new("perl")
+        let output = Command::new("perl -Mfeature=say -Mstrict -Mwarnings")
             .arg(&self.main_file_path)
             .args(&self.get_data().cli_args)
             .output()
