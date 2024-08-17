@@ -28,13 +28,13 @@ cargo_build() {
 }
 
 get_latest_release() {
-  curl --silent "https://api.github.com/repos/michaelb/sniprun/releases/latest" | LC_ALL=C tr -d "\n" | sed -e 's|^.*\("tag_name"[^,]*\).*|\1|' | cut -d'"' -f4 # sed keeps matchgroup "tag_name": "vX.Z.Z", cut -d '"' does the rest
+  curl --silent "https://api.github.com/repos/hdw9703/sniprun/releases/latest" | LC_ALL=C tr -d "\n" | sed -e 's|^.*\("tag_name"[^,]*\).*|\1|' | cut -d'"' -f4 # sed keeps matchgroup "tag_name": "vX.Z.Z", cut -d '"' does the rest
 }
 
 # download the sniprun binary (of the specified version) from Releases
 download() {
   echo "Downloading sniprun binary: $1"
-  curl -fsSL "https://github.com/michaelb/sniprun/releases/download/$1/sniprun" --output sniprun
+  curl -fsSL "https://github.com/hdw9703/sniprun/releases/download/$1/sniprun" --output sniprun
   mkdir -p target/release/
   mv -f sniprun target/release/
 }
