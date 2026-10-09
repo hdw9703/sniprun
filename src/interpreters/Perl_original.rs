@@ -99,10 +99,8 @@ impl Interpreter for Perl_original {
     }
 
     fn build(&mut self) -> Result<(), SniprunError> {
-        let mut _file =
-            File::create(&self.main_file_path).expect("Failed to create file for perl-original");
-
-        write(&self.main_file_path, &self.code).expect("Unable to write to file for perl-original");
+        // 直接使用 fs::write 即可，它会自动处理文件的创建和截断覆盖
+        write(&self.main_file_path, &self.code).expect("Unable to write code to file for Perl_original");
         Ok(())
     }
 
