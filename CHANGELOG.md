@@ -1,3 +1,33 @@
+## v1.3.22
+- Wrap long lines in FloatingWindow display mode
+
+## v1.3.21
+- Settable current working directory
+- Fix window/terminal close bug
+
+## v1.3.20
+- PHP repl, Rust repl fixes
+- Python3_original import indentation fix
+
+## v1.3.19
+- PHP (incl. REPL) support, courtesy of @be-west
+- CI fixes & improvements
+
+## v1.3.18
+- Swift support (incl. REPL)
+- Configurable REPL timeout
+- Rust_original now repl capable (based on evcxr)
+- REPL limitation 'please re-run your snippet' removed
+
+## v1.3.17
+- Better fallback messages
+- Terminal display mode fixes (courtesy of @dbeecham)
+- VirtualLine display mode
+
+## v1.3.16
+- Fix nvim-notify timeout and add render style option
+- Filter ANSI escape code by default
+
 ## v1.3.15
 - Add PlantUML support (ascii output)
 - Basic user input support

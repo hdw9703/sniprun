@@ -7,6 +7,7 @@ pub use display::{display, display_floating_window, DisplayFilter::*, DisplayTyp
 use log::{info, LevelFilter};
 use neovim_lib::{Neovim, NeovimApi, Session, Value};
 use simple_logging::log_to_file;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -59,6 +60,10 @@ pub struct DataHolder {
     ///interpreter options
     pub interpreter_options: Option<Value>,
 
+    /// user config, expressing the desired working dir for the spawned
+    /// interpreter / exe processes. if "." or unset, uses projectroot
+    pub cwd: Option<String>,
+
     ///interpreter data
     pub interpreter_data: Option<Arc<Mutex<InterpreterData>>>,
 
@@ -73,6 +78,9 @@ pub struct DataHolder {
     pub cli_args: Vec<String>,
 
     pub nvim_pid: usize,
+
+    // getting this sometimes fail, so better save it in sniprun's memory
+    pub sniprun_namespace_id_cache: Option<i64>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -109,6 +117,9 @@ impl Default for DataHolder {
             range: [-1, -1],
             filepath: String::new(),
             projectroot: String::new(),
+            cwd: std::env::current_dir()
+                .ok()
+                .map(|path| path.to_string_lossy().to_string()),
             dependencies_path: vec![],
             work_dir: format!("{}/{}", cache_dir().unwrap().to_str().unwrap(), "sniprun"),
             sniprun_root_dir: String::new(),
@@ -123,6 +134,7 @@ impl Default for DataHolder {
             display_no_output: vec![DisplayType::Classic(Both)],
             cli_args: vec![],
             nvim_pid: 0,
+            sniprun_namespace_id_cache: None,
         }
     }
 }
@@ -153,6 +165,15 @@ impl DataHolder {
             self.current_bloc = real_current_bloc.join("\n");
             self.current_line = real_current_bloc[0].to_string();
         }
+    }
+
+    pub fn get_desired_cwd(&self) -> PathBuf {
+        if let Some(cwd) = &self.cwd {
+            if cwd != "." {
+                return PathBuf::from(&cwd);
+            }
+        }
+        PathBuf::from(&self.projectroot)
     }
 }
 
@@ -250,6 +271,12 @@ impl EventHandler {
                 info!("[FILLDATA] got sniprun root");
             }
         }
+        {
+            if let Some(i) = self.index_from_name("cwd", config) {
+                self.data.cwd = Some(String::from(config[i].1.as_str().unwrap()));
+                info!("[FILLDATA] got sniprun config cwd");
+            }
+        }
 
         {
             //get neovim's current directory
@@ -271,7 +298,7 @@ impl EventHandler {
             //get filetype
             let ft = self.nvim.lock().unwrap().command_output("set ft?");
             if let Ok(real_ft) = ft {
-                self.data.filetype = String::from(real_ft.split('=').last().unwrap());
+                self.data.filetype = String::from(real_ft.split('=').next_back().unwrap());
             }
             info!("[FILLDATA] got filetype");
         }
@@ -519,15 +546,12 @@ pub fn start() {
                             let result = launcher.select_and_run();
                             info!("[RUN] Interpreter return a result");
                             data.range[1] += 1; // display on end of code bloc
-                            display(result, nvim, &data);
+                            display(result, nvim, &mut data);
                         }
                     } else {
                         // normal, unique result
-                        display(result, event_handler2.nvim, &event_handler2.data);
+                        display(result, event_handler2.nvim, &mut event_handler2.data);
                     }
-
-                    //clean data
-                    event_handler2.data = DataHolder::new();
                 })));
             }
             Messages::Clean => {
@@ -591,7 +615,7 @@ mod test_main {
         let result = launcher.select_and_run();
         info!("[RUN] Interpreter return a result");
 
-        display(result, event_handler.nvim, &event_handler.data);
+        display(result, event_handler.nvim, &mut event_handler.data);
     }
 
     pub fn fake_event() -> EventHandler {

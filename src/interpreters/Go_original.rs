@@ -19,7 +19,7 @@ impl Go_original {
         let default_compiler = String::from("go");
         self.compiler = default_compiler;
         if let Some(used_compiler) =
-            Go_original::get_interpreter_option(&self.get_data(), "compiler")
+            Go_original::get_interpreter_option(self.get_data(), "compiler")
         {
             if let Some(compiler_string) = used_compiler.as_str() {
                 info!("Using custom compiler: {}", compiler_string);
@@ -124,7 +124,11 @@ impl Go_original {
     }
 
     fn parse_import_path(p: &str) -> String {
-        p.replace('\"', "").split('/').last().unwrap().to_string()
+        p.replace('\"', "")
+            .split('/')
+            .next_back()
+            .unwrap()
+            .to_string()
     }
 }
 
@@ -182,10 +186,12 @@ impl Interpreter for Go_original {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Import
     }
@@ -239,6 +245,7 @@ impl Interpreter for Go_original {
 
         //compile it (to the bin_path that arleady points to the rigth path)
         let output = Command::new(self.compiler.split_whitespace().next().unwrap())
+            .current_dir(Go_original::get_interpreter_desired_cwd(&self.data))
             .args(self.compiler.split_whitespace().skip(1))
             .arg("build")
             .arg("-o")
@@ -249,7 +256,7 @@ impl Interpreter for Go_original {
 
         //TODO if relevant, return the error number (parse it from stderr)
         if !output.status.success() {
-            if Go_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+            if Go_original::error_truncate(self.get_data()) == ErrTruncate::Short {
                 Err(SniprunError::CompilationError(
                     String::from_utf8(output.stderr.clone())
                         .unwrap()
@@ -271,12 +278,13 @@ impl Interpreter for Go_original {
     fn execute(&mut self) -> Result<String, SniprunError> {
         //run th binary and get the std output (or stderr)
         let output = Command::new(&self.bin_path)
+            .current_dir(Go_original::get_interpreter_desired_cwd(&self.data))
             .args(&self.get_data().cli_args)
             .output()
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Go_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Go_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()

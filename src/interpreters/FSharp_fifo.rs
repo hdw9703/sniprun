@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -38,9 +39,9 @@ impl FSharp_fifo {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > 30 {
+            if start.elapsed().as_secs() > FSharp_fifo::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
-                    "reached the 30s timeout",
+                    "reached the repl timeout",
                 )));
             }
 
@@ -54,9 +55,9 @@ impl FSharp_fifo {
                     // info!("file : {:?}", contents);
                     if err_contents.contains(&end_mark) {
                         if let Some(index) = err_contents.rfind(&start_mark) {
-                            let mut err_to_display = err_contents
-                                [index + start_mark.len()..err_contents.len() - end_mark.len() - 1]
-                                .to_owned();
+                            let index_e = err_contents.rfind(&end_mark).unwrap();
+                            let mut err_to_display =
+                                err_contents[index + start_mark.len()..index_e].to_owned();
                             info!("err to display : {:?}", err_to_display);
                             if !err_to_display.trim().is_empty() {
                                 info!("err found");
@@ -85,9 +86,8 @@ impl FSharp_fifo {
                     if out_contents.contains(&end_mark) {
                         info!("out found");
                         let index = out_contents.rfind(&start_mark).unwrap();
-                        return Ok(out_contents
-                            [index + start_mark.len()..out_contents.len() - end_mark.len() - 1]
-                            .to_owned());
+                        let index_e = out_contents.rfind(&end_mark).unwrap();
+                        return Ok(out_contents[index + start_mark.len()..index_e].to_owned());
                     }
                 }
             }
@@ -100,7 +100,7 @@ impl FSharp_fifo {
         let default_interpreter = String::from("dotnet fsi --nologo");
         self.interpreter = default_interpreter;
         if let Some(used_interpreter) =
-            FSharp_fifo::get_interpreter_option(&self.get_data(), "interpreter")
+            FSharp_fifo::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -161,10 +161,12 @@ impl Interpreter for FSharp_fifo {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -198,6 +200,7 @@ impl Interpreter for FSharp_fifo {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new(self.interpreter.split_whitespace().next().unwrap())
+            .current_dir(FSharp_fifo::get_interpreter_desired_cwd(&self.data))
             .args(self.interpreter.split_whitespace().skip(1))
             .arg(&self.interpreter)
             .arg(&self.main_file_path)
@@ -206,7 +209,7 @@ impl Interpreter for FSharp_fifo {
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if FSharp_fifo::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if FSharp_fifo::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()
@@ -258,6 +261,7 @@ impl ReplLikeInterpreter for FSharp_fifo {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(FSharp_fifo::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -282,9 +286,12 @@ impl ReplLikeInterpreter for FSharp_fifo {
             let pause = std::time::Duration::from_millis(2000); // prevent an user from re-running the snippet
                                                                 // before dotnet launches (2-3 secs)
             std::thread::sleep(pause);
-            Err(SniprunError::CustomError(
-                "F# interactive kernel launched, re-run your snippet".to_owned(),
-            ))
+
+            self.save_code("kernel_launched\n".to_owned());
+            let pause = std::time::Duration::from_millis(100);
+            std::thread::sleep(pause);
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -324,6 +331,7 @@ impl ReplLikeInterpreter for FSharp_fifo {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(FSharp_fifo::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

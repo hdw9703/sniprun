@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -52,10 +53,12 @@ impl Interpreter for R_original {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn check_cli_args(&self) -> Result<(), SniprunError> {
         // All cli arguments are sendable to python
         // Though they will be ignored in REPL mode
@@ -100,6 +103,7 @@ impl Interpreter for R_original {
     fn execute(&mut self) -> Result<String, SniprunError> {
         let interpreter = R_original::get_interpreter_or(&self.data, "Rscript");
         let output = Command::new(interpreter.split_whitespace().next().unwrap())
+            .current_dir(R_original::get_interpreter_desired_cwd(&self.data))
             .args(interpreter.split_whitespace().skip(1))
             .arg(&self.main_file_path)
             .args(&self.get_data().cli_args)
@@ -108,7 +112,7 @@ impl Interpreter for R_original {
         info!("yay from R interpreter");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if R_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if R_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()

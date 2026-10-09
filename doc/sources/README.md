@@ -32,7 +32,7 @@ An example in C, look in the command area:
 **send-to-REPL-like behavior is available for some languages**
 
 Python, R, D, Mathematica, Sage, Julia, Javascript & Typescript (via deno),
-Clojure and Lua, coming soon for many other interpreted and compiled languages.
+Clojure, Rust (via `evcxr`) and Lua, coming soon for many other interpreted and compiled languages.
 Very versatile, you can even run things like GUI plots on the fly!
 
 ![](../../ressources/visual_assets/demo_repl.png)
@@ -77,11 +77,11 @@ Sniprun will then:
 
 - **Compiler / interpreter** for the languages you work with must be installed & on your \$PATH. In case non-standard build tools or softwares are required, those are documented in the navigation pane of the [wiki](https://michaelb.github.io/sniprun/), as well as in the [doc/sources/interpreters](https://github.com/michaelb/sniprun/tree/master/doc/sources/interpreters) folder, for each interpreter, which I urge you to get a look at before getting started as it also contains the potential limitations of each interpreter; this information can be accessed through `:SnipInfo <interpreter_name>` (tab autocompletion supported).
 
-- [optional] **cargo and the rust toolchain** version >= 1.65 (you can find those [here](https://www.rust-lang.org/tools/install)), if you want/need to compile sniprun locally.
+- [optional] **cargo and the rust toolchain** version >= 1.65 (you can find those [here](https://www.rust-lang.org/tools/install)), if you want/need to compile sniprun locally. When using old version of Rust, the `--locked` flag is necessary to prevent Cargo from overzealously updating packages
 
 - [optional] the plugin [nvim-notify](https://github.com/rcarriga/nvim-notify) for the notification display style
 
-Note: Since sniprun is written in Rust and many users may not have/want a Rust toolchain, a binary compiled from a Github Action gets downloaded from Releases. If you don't want that, just install a Rust toolchain and replace the install.sh invocation in your config by `cargo build --release`.
+Note: Since sniprun is written in Rust and many users may not have/want a Rust toolchain, a binary compiled from a Github Action gets downloaded from Releases. If you don't want that, just install a Rust toolchain and replace the install.sh invocation in your config by `cargo build --release`. (Small detail: sniprun expects its binary in a very precise location, so make sure to _not_ have a custom $CARGO_TARGET_DIR or ~/.cargo/config.toml's `target-dir`)
 
 ## Install Sniprun
 
@@ -262,6 +262,7 @@ require'sniprun'.setup({
     "VirtualTextOk",              --# display ok results as virtual text (multiline is shortened)
 
     -- "VirtualText",             --# display results as virtual text
+    -- "VirtualLine",             --# display results as virtual lines
     -- "TempFloatingWindow",      --# display results in a floating window
     -- "LongTempFloatingWindow",  --# same as above, but only long results. To use with VirtualText[Ok/Err]
     -- "Terminal",                --# display results in a vertical split
@@ -274,20 +275,24 @@ require'sniprun'.setup({
 
   display_options = {
     terminal_scrollback = vim.o.scrollback, --# change terminal display scrollback lines
-    terminal_line_number = false, --# whether show line number in terminal window
-    terminal_signcolumn = false,  --# whether show signcolumn in terminal window
+    terminal_line_number = false,   --# whether show line number in terminal window
+    terminal_signcolumn = false,    --# whether show signcolumn in terminal window
     terminal_position = "vertical", --# or "horizontal", to open as horizontal split instead of vertical split
     terminal_width = 45,          --# change the terminal display option width (if vertical)
     terminal_height = 20,         --# change the terminal display option height (if horizontal)
     notification_timeout = 5      --# timeout for nvim_notify output
+    max_fw_width = 80,            --# max width for floating windows, longer lines will wrap
   },
 
   --# You can use the same keys to customize whether a sniprun producing
   --# no output should display nothing or '(no output)'
   show_no_output = {
     "Classic",
-    "TempFloatingWindow",      --# implies LongTempFloatingWindow, which has no effect on its own
+    "TempFloatingWindow",  --# implies LongTempFloatingWindow, which has no effect on its own
   },
+
+  cwd = '.',  --# set the working directory for build/run processes. By default or if set to '.',
+              --# is neovim's current working directory. Can be overwritten by interpreter-options
 
   --# customize highlight groups (setting this overrides colorscheme)
   --# any parameters of nvim_set_hl() can be passed as-is
@@ -298,10 +303,11 @@ require'sniprun'.setup({
     SniprunFloatingWinErr  =  {fg="#881515", ctermfg="DarkRed", bold=true},
   },
 
-  live_mode_toggle='off'      --# live mode toggle, see Usage - Running for more info   
+  live_mode_toggle='off',      --# live mode toggle, see Usage - Running for more info
 
   --# miscellaneous compatibility/adjustement settings
-  inline_messages = false,    --# boolean toggle for a one-line way to display messages
+  ansi_escape = true,         --# Remove ANSI escapes (usually color) from outputs
+  inline_messages = false,    --# boolean toggle for a one-line way to display output
                               --# to workaround sniprun not being able to display anything
 
   borders = 'single',         --# display borders around floating windows
@@ -335,8 +341,9 @@ All of sniprun functionalities:
 (mapping)=
 ## Mappings & recommandations
 
-- Map the run command to a simple command such as `<leader>ff` (or just `f` in visual mode)
-- Check `SnipInfo` & `:SnipInfo <interpreter_name>` to learn any quirk or tips about the language you're interested in
+- Map the run command to a simple command such as `<leader>r` 
+- Check `SnipInfo` & `:SnipInfo <interpreter_name>` to learn any quirk or
+  tips about the language you're interested in (completion is available)
 - The operator mapping allows you to combine movements with sniprun: with the suggested mapping, "\<leader\>f + j" will run sniprun on the current line + the line below.
 
   (if you don't know what is the leader key you can find a short explanation [here](https://vim.works/2019/03/03/vims-leader-key-wtf-is-it/)).
@@ -345,9 +352,9 @@ All of sniprun functionalities:
 <p>
 
 ```
-vim.api.nvim_set_keymap('v', 'f', '<Plug>SnipRun', {silent = true})
+vim.api.nvim_set_keymap('v', '<leader>r', '<Plug>SnipRun', {silent = true})
+vim.api.nvim_set_keymap('n', '<leader>r', '<Plug>SnipRun', {silent = true})
 vim.api.nvim_set_keymap('n', '<leader>f', '<Plug>SnipRunOperator', {silent = true})
-vim.api.nvim_set_keymap('n', '<leader>ff', '<Plug>SnipRun', {silent = true})
 ```
 </details>
 </p>
@@ -427,9 +434,10 @@ println!("-> {}", alphabet);
 | Perl/Perl6   | Line          | No               |
 | Plantuml     | Bloc          | No               |
 | Python3      | Import        | Yes\*\*          |
+| PHP          | Bloc          | Yes\*\*          |
 | R            | Bloc          | Yes\*\*          |
 | Ruby         | Bloc          | No               |
-| Rust         | Bloc          | No               |
+| Rust         | Bloc          | Yes               |
 | SageMath     | Import        | Yes\*\*          |
 | Scala        | Bloc          | No               |
 | SQL          | Bloc          | No               |
@@ -511,7 +519,7 @@ sa.run_string(codestring, <filetype>, <config>)
 
 Due to its nature, Sniprun may have trouble with programs that :
 
-- Mess with standart output / stderr
+- Mess with standard output / stderr
 - Need to read from stdin
 - Print incorrect UTF8 characters, or just too many lines
 - Access files; sniprun does not run in a virtual environment, it accesses files just like your own code do, but since it does not run the whole program, something might go wrong. **Relative paths may cause issues**, as the current working directory for sniprun will be somewhere in ~/.cache/sniprun, and relative imports may miss.

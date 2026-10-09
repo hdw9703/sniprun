@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -125,10 +126,12 @@ impl Interpreter for Mathematica_original {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn has_repl_capability() -> bool {
         true
     }
@@ -164,7 +167,7 @@ impl Interpreter for Mathematica_original {
         let mut preload_graphics = String::from("");
         let mut wait_for_graphics = String::from("");
         if let Some(use_javagraphics_msgpack) = Mathematica_original::get_interpreter_option(
-            &self.get_data(),
+            self.get_data(),
             "use_javagraphics_if_contains",
         ) {
             if let Some(use_javagraphics) = use_javagraphics_msgpack.as_array() {
@@ -176,7 +179,7 @@ impl Interpreter for Mathematica_original {
                             wait_for_graphics = String::from("Pause[3600];\n");
 
                             if let Some(time_mgspack) = Mathematica_original::get_interpreter_option(
-                                &self.get_data(),
+                                self.get_data(),
                                 "keep_plot_open_for",
                             ) {
                                 if let Some(time) = time_mgspack.as_i64() {
@@ -195,7 +198,7 @@ impl Interpreter for Mathematica_original {
 
         if let Some(wrap_all_lines_with_print_msgpack) =
             Mathematica_original::get_interpreter_option(
-                &self.get_data(),
+                self.get_data(),
                 "wrap_all_lines_with_print",
             )
         {
@@ -211,7 +214,7 @@ impl Interpreter for Mathematica_original {
         }
         if let Some(wrap_last_line_with_print_msgpack) =
             Mathematica_original::get_interpreter_option(
-                &self.get_data(),
+                self.get_data(),
                 "wrap_last_line_with_print",
             )
         {
@@ -247,6 +250,9 @@ impl Interpreter for Mathematica_original {
         //run th binary and get the std output (or stderr)
         let interpreter = Mathematica_original::get_interpreter_or(&self.data, "WolframKernel");
         let output = Command::new(interpreter.split_whitespace().next().unwrap())
+            .current_dir(Mathematica_original::get_interpreter_desired_cwd(
+                &self.data,
+            ))
             .args(interpreter.split_whitespace().skip(1))
             .arg("-noprompt")
             .arg("-script")
@@ -298,6 +304,9 @@ impl ReplLikeInterpreter for Mathematica_original {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(Mathematica_original::get_interpreter_desired_cwd(
+                            &self.data,
+                        ))
                         .args(&[init_repl_cmd, self.language_work_dir.clone()])
                         .output()
                         .unwrap();
@@ -325,7 +334,7 @@ impl ReplLikeInterpreter for Mathematica_original {
         info!("adding boilerplate");
         let mut preload_graphics = "";
         if let Some(use_javagraphics_msgpack) = Mathematica_original::get_interpreter_option(
-            &self.get_data(),
+            self.get_data(),
             "use_javagraphics_if_contains",
         ) {
             if !self.read_previous_code().contains("JavaGraphics loaded") {
@@ -369,6 +378,9 @@ impl ReplLikeInterpreter for Mathematica_original {
         let send_repl_cmd = self.data.sniprun_root_dir.clone()
             + "/src/interpreters/Mathematica_original/launcher.sh";
         let res = Command::new(send_repl_cmd)
+            .current_dir(Mathematica_original::get_interpreter_desired_cwd(
+                &self.data,
+            ))
             .arg(self.language_work_dir.clone() + "/main.mma")
             .arg(self.language_work_dir.clone() + "/pipe_in")
             .spawn()

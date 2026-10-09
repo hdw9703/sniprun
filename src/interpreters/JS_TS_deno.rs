@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -37,9 +38,9 @@ impl JS_TS_deno {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > 30 {
+            if start.elapsed().as_secs() > JS_TS_deno::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
-                    "reached the 30s timeout",
+                    "reached the repl timeout",
                 )));
             }
 
@@ -52,9 +53,9 @@ impl JS_TS_deno {
                     // info!("errfile could be read : {:?}", err_contents);
                     if err_contents.contains(&end_mark) {
                         if let Some(index) = err_contents.rfind(&start_mark) {
-                            let mut err_to_display = err_contents
-                                [index + start_mark.len()..err_contents.len() - end_mark.len() - 1]
-                                .to_owned();
+                            let index_e = err_contents.rfind(&end_mark).unwrap();
+                            let mut err_to_display =
+                                err_contents[index + start_mark.len()..index_e].to_owned();
                             info!("err to display : {:?}", err_to_display);
                             if !err_to_display.trim().is_empty() {
                                 info!("err found");
@@ -90,9 +91,8 @@ impl JS_TS_deno {
                     if relevant_content.contains(&end_mark) {
                         info!("out found");
                         let index = relevant_content.rfind(&start_mark).unwrap();
-                        return Ok(relevant_content[index + start_mark.len()
-                            ..relevant_content.len() - end_mark.len() - 1]
-                            .to_owned());
+                        let index_e = relevant_content.rfind(&end_mark).unwrap();
+                        return Ok(relevant_content[index + start_mark.len()..index_e].to_owned());
                     }
                 }
             }
@@ -151,10 +151,13 @@ impl Interpreter for JS_TS_deno {
     fn default_for_filetype() -> bool {
         false
     }
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
-    }
 
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
+    }
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         //define the max level support of the interpreter (see readme for definitions)
         SupportLevel::Bloc
@@ -217,6 +220,7 @@ impl Interpreter for JS_TS_deno {
         //run the binary and get the std output (or stderr)
         let interpreter = JS_TS_deno::get_interpreter_or(&self.data, "deno");
         let output = Command::new(interpreter.split_whitespace().next().unwrap())
+            .current_dir(JS_TS_deno::get_interpreter_desired_cwd(&self.data))
             .args(interpreter.split_whitespace().skip(1))
             .arg("run")
             .arg("-A")
@@ -231,13 +235,13 @@ impl Interpreter for JS_TS_deno {
             Ok(String::from_utf8(output.stdout).unwrap())
         } else {
             // return stderr
-            if JS_TS_deno::error_truncate(&self.get_data()) == ErrTruncate::Short {
+            if JS_TS_deno::error_truncate(self.get_data()) == ErrTruncate::Short {
                 Err(SniprunError::RuntimeError(
                     String::from_utf8(output.stderr.clone())
                         .unwrap()
                         .lines()
                         .filter(|l| l.contains("Error:"))
-                        .last()
+                        .next_back()
                         .unwrap_or(&String::from_utf8(output.stderr).unwrap())
                         .to_string(),
                 ))
@@ -284,6 +288,7 @@ impl ReplLikeInterpreter for JS_TS_deno {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(JS_TS_deno::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -302,13 +307,11 @@ impl ReplLikeInterpreter for JS_TS_deno {
                 }
             };
 
+            self.save_code("kernel_launched\n".to_owned());
             let pause = std::time::Duration::from_millis(100);
             std::thread::sleep(pause);
-            self.save_code("kernel_launched\n".to_owned());
-
-            Err(SniprunError::CustomError(
-                "Deno kernel launched, re-run your snippet".to_owned(),
-            ))
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -348,6 +351,7 @@ impl ReplLikeInterpreter for JS_TS_deno {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(JS_TS_deno::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

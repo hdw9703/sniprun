@@ -63,9 +63,11 @@ impl Interpreter for Plantuml_original {
     fn set_current_level(&mut self, level: SupportLevel) {
         self.support_level = level;
     }
-
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
+    }
+    fn get_data(&self) -> &DataHolder {
+        &self.data
     }
 
     fn default_for_filetype() -> bool {
@@ -202,6 +204,7 @@ impl Interpreter for Plantuml_original {
         let compiler = Plantuml_original::get_compiler_or(&self.data, "plantuml");
         //compile it (to the bin_path that already points to the rigth path)
         let output = Command::new(compiler.split_whitespace().next().unwrap())
+            .current_dir(Plantuml_original::get_interpreter_desired_cwd(&self.data))
             .args(compiler.split_whitespace().skip(1))
             .arg("-o")
             .arg(&self.language_work_dir)

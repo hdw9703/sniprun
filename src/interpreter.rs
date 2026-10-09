@@ -2,6 +2,7 @@ use crate::error::SniprunError;
 use crate::DataHolder;
 use log::info;
 use std::fmt::Display;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 #[allow(dead_code)]
@@ -62,7 +63,8 @@ pub trait Interpreter: ReplLikeInterpreter {
 
     fn get_current_level(&self) -> SupportLevel;
     fn set_current_level(&mut self, level: SupportLevel);
-    fn get_data(&self) -> DataHolder;
+    fn get_data_mut(&mut self) -> &mut DataHolder;
+    fn get_data(&self) -> &DataHolder;
 
     fn get_nvim_pid(data: &DataHolder) -> String {
         // associated utility function
@@ -140,9 +142,12 @@ pub trait Interpreter: ReplLikeInterpreter {
             .and_then(|_| self.build())
             .and_then(|_| self.execute());
         if res.is_err() {
-            let alt_res = self.fallback();
-            if let Some(Ok(alt_res_ok)) = alt_res {
-                return Ok(alt_res_ok);
+            info!(
+                "Current interpreter produced an error: {res:?} This might be normal,\
+                but we'll check if fallback interpreters produce a valid answer"
+            );
+            if let Some(alt_res) = self.fallback() {
+                return fallback_concatenate_result(res, alt_res);
             }
         }
 
@@ -187,17 +192,20 @@ pub trait InterpreterUtils {
     ///read previously saved code from the interpreterdata object
     fn read_previous_code(&self) -> String;
     ///append code to the interpreterdata object
-    fn save_code(&self, code: String);
-    fn clear(&self);
+    fn save_code(&mut self, code: String);
+    fn clear(&mut self);
 
-    fn set_pid(&self, pid: u32);
-    fn get_pid(&self) -> Option<u32>;
+    fn set_pid(&mut self, pid: u32);
+    fn get_pid(&mut self) -> Option<u32>;
     fn get_interpreter_option(data: &DataHolder, option: &str) -> Option<neovim_lib::Value>;
     fn contains_main(entry: &str, snippet: &str, comment: &str) -> bool;
     fn error_truncate(data: &DataHolder) -> ErrTruncate;
 
+    fn get_repl_timeout(data: &DataHolder) -> u64;
     fn get_compiler_or(data: &DataHolder, or: &str) -> String;
     fn get_interpreter_or(data: &DataHolder, or: &str) -> String;
+
+    fn get_interpreter_desired_cwd(data: &DataHolder) -> PathBuf;
 }
 
 impl<T: Interpreter> InterpreterUtils for T {
@@ -209,7 +217,13 @@ impl<T: Interpreter> InterpreterUtils for T {
             String::new()
         } else {
             info!("found interpreter_data");
-            let interpreter_data = data.interpreter_data.unwrap().lock().unwrap().clone();
+            let interpreter_data = data
+                .interpreter_data
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .clone();
             let content_owner = T::get_name();
             if interpreter_data.owner == content_owner {
                 interpreter_data.content
@@ -222,40 +236,27 @@ impl<T: Interpreter> InterpreterUtils for T {
     /// Save an unique String to Sniprun memory.
     /// This will be emptied at neovim startup,
     /// when sniprun is reset or memoryclean'd
-    fn save_code(&self, code: String) {
+    fn save_code(&mut self, code: String) {
         let previous_code = self.read_previous_code();
-        let data = self.get_data();
-        if data.interpreter_data.is_none() {
-            info!("Unable to save code for next usage");
-        } else {
+        let data = self.get_data_mut();
+        if let Some(d) = data.interpreter_data.as_mut() {
             {
-                data.interpreter_data.clone().unwrap().lock().unwrap().owner = T::get_name();
+                d.lock().unwrap().owner = T::get_name();
             }
             {
-                data.interpreter_data.unwrap().lock().unwrap().content =
-                    previous_code + "\n" + &code;
+                d.lock().unwrap().content = previous_code + "\n" + &code;
             }
             info!("code saved: {}", self.read_previous_code());
         }
     }
 
     /// Clear sniprun memory
-    fn clear(&self) {
-        let data = self.get_data();
-        if data.interpreter_data.is_some() {
-            data.interpreter_data
-                .clone()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .owner
-                .clear();
-            data.interpreter_data
-                .unwrap()
-                .lock()
-                .unwrap()
-                .content
-                .clear();
+    fn clear(&mut self) {
+        if let Some(d) = self.get_data_mut().interpreter_data.as_mut() {
+            let mut d = d.lock().unwrap();
+            d.owner.clear();
+            d.content.clear();
+            d.pid = None;
         }
     }
 
@@ -263,15 +264,15 @@ impl<T: Interpreter> InterpreterUtils for T {
     /// to sniprun memory
     /// This will be emptied at neovim startup,
     /// when sniprun is reset or memoryclean'd
-    fn set_pid(&self, pid: u32) {
-        if let Some(di) = self.get_data().interpreter_data {
+    fn set_pid(&mut self, pid: u32) {
+        if let Some(di) = &self.get_data().interpreter_data {
             di.lock().unwrap().pid = Some(pid);
         }
     }
 
     /// get a unsigned integer previously saved in sniprun memory
-    fn get_pid(&self) -> Option<u32> {
-        if let Some(di) = self.get_data().interpreter_data {
+    fn get_pid(&mut self) -> Option<u32> {
+        if let Some(di) = &self.get_data().interpreter_data {
             di.lock().unwrap().pid
         } else {
             None
@@ -280,18 +281,6 @@ impl<T: Interpreter> InterpreterUtils for T {
 
     /// get an interpreter option
     fn get_interpreter_option(data: &DataHolder, option: &str) -> Option<neovim_lib::Value> {
-        fn index_from_name(
-            name: &str,
-            config: &[(neovim_lib::Value, neovim_lib::Value)],
-        ) -> Option<usize> {
-            for (i, kv) in config.iter().enumerate() {
-                if name == kv.0.as_str().unwrap_or("") {
-                    return Some(i);
-                }
-            }
-            // info!("key '{}' not found in interpreter option", name);
-            None
-        }
         // this is the ugliness required to fetch something from the interpreter options
         if let Some(config) = &data.interpreter_options {
             if let Some(ar) = config.as_map() {
@@ -310,6 +299,16 @@ impl<T: Interpreter> InterpreterUtils for T {
         }
 
         None
+    }
+
+    /// returns the configured time (in seconds) to wait for a repl response
+    /// Default: 30s
+    fn get_repl_timeout(data: &DataHolder) -> u64 {
+        if let Some(timeout) = T::get_interpreter_option(data, "repl_timeout") {
+            timeout.as_u64().unwrap_or(30)
+        } else {
+            30
+        }
     }
 
     fn get_compiler_or(data: &DataHolder, or: &str) -> String {
@@ -331,6 +330,17 @@ impl<T: Interpreter> InterpreterUtils for T {
         }
         info!("using interpreter '{}'", or);
         or.to_string()
+    }
+
+    fn get_interpreter_desired_cwd(data: &DataHolder) -> PathBuf {
+        if let Some(cwd) = T::get_interpreter_option(data, "cwd") {
+            if let Some(cwd) = cwd.as_str() {
+                info!("found cwd '{}'", cwd);
+                return PathBuf::from(cwd);
+            }
+        }
+        // otherwise, use config.cwd if set, or else, neovim's cwd
+        data.get_desired_cwd()
     }
 
     fn error_truncate(data: &DataHolder) -> ErrTruncate {
@@ -381,5 +391,37 @@ pub trait ReplLikeInterpreter {
         Err(SniprunError::InterpreterLimitationError(String::from(
             "REPL-like behavior is not implemented for this interpreter",
         )))
+    }
+}
+pub fn index_from_name(
+    name: &str,
+    config: &[(neovim_lib::Value, neovim_lib::Value)],
+) -> Option<usize> {
+    for (i, kv) in config.iter().enumerate() {
+        if name == kv.0.as_str().unwrap_or("") {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn fallback_concatenate_result(
+    res: Result<String, SniprunError>,
+    alt_res: Result<String, SniprunError>,
+) -> Result<String, SniprunError> {
+    let extra_msg = "\nSNIPRUN -- fallback occurs when several interpreters are available\n\
+        for a language and the default one errors out\n\
+        Using :SnipInfo to determine which interpreter is used and which is wanted,\n\
+        then adding it to the configuration under `selected_interpreters` is recommended.";
+    match res {
+        Ok(_) => res,
+        Err(e) => {
+            match alt_res {
+                Ok(alt_ok) => Ok(alt_ok + "\n SNIPRUN -- using a fallback interpreter because the original interpreter failed with:\n" + &e.to_string() + extra_msg),
+                Err(alt_err) => Err(SniprunError::CustomError(e.to_string() + "\nSNIPRUN -- The fallback interpreter also failed with:\n" + &alt_err.to_string() + extra_msg))
+            }
+
+        }
+
     }
 }

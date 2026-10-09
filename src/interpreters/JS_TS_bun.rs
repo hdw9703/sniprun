@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -31,9 +32,9 @@ impl JS_TS_bun {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > 30 {
+            if start.elapsed().as_secs() > JS_TS_bun::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
-                    "reached the 30s timeout",
+                    "reached the repl timeout",
                 )));
             }
 
@@ -128,10 +129,13 @@ impl Interpreter for JS_TS_bun {
     fn default_for_filetype() -> bool {
         false
     }
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
-    }
 
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
+    }
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         //define the max level support of the interpreter (see readme for definitions)
         SupportLevel::Bloc
@@ -201,6 +205,7 @@ impl Interpreter for JS_TS_bun {
         }
         let interpreter = JS_TS_bun::get_interpreter_or(&self.data, "bun");
         let output = Command::new(interpreter.split_whitespace().next().unwrap())
+            .current_dir(JS_TS_bun::get_interpreter_desired_cwd(&self.data))
             .args(interpreter.split_whitespace().skip(1))
             .arg("run")
             .arg("--silent")
@@ -214,13 +219,13 @@ impl Interpreter for JS_TS_bun {
             Ok(String::from_utf8(output.stdout).unwrap())
         } else {
             // return stderr
-            if JS_TS_bun::error_truncate(&self.get_data()) == ErrTruncate::Short {
+            if JS_TS_bun::error_truncate(self.get_data()) == ErrTruncate::Short {
                 Err(SniprunError::RuntimeError(
                     String::from_utf8(output.stderr.clone())
                         .unwrap()
                         .lines()
                         .filter(|l| l.contains("Error:"))
-                        .last()
+                        .next_back()
                         .unwrap_or(&String::from_utf8(output.stderr).unwrap())
                         .to_string(),
                 ))
@@ -267,6 +272,7 @@ impl ReplLikeInterpreter for JS_TS_bun {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(JS_TS_bun::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -325,6 +331,7 @@ impl ReplLikeInterpreter for JS_TS_bun {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(JS_TS_bun::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

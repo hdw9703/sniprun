@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -59,10 +60,12 @@ impl Interpreter for Julia_jupyter {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -99,17 +102,18 @@ impl Interpreter for Julia_jupyter {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new("julia")
+            .current_dir(Julia_jupyter::get_interpreter_desired_cwd(&self.data))
             .arg(&self.main_file_path)
             .output()
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Julia_jupyter::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Julia_jupyter::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()
                     .lines()
-                    .last()
+                    .next_back()
                     .unwrap_or(&String::from_utf8(output.stderr).unwrap())
                     .to_owned(),
             ))
@@ -172,6 +176,7 @@ impl ReplLikeInterpreter for Julia_jupyter {
     fn execute_repl(&mut self) -> Result<String, SniprunError> {
         info!("starting executing repl: bash {}", &self.launcher_path);
         let output = Command::new("bash")
+            .current_dir(Julia_jupyter::get_interpreter_desired_cwd(&self.data))
             .arg(&self.launcher_path)
             .output()
             .expect("failed to run command");
@@ -193,7 +198,7 @@ impl ReplLikeInterpreter for Julia_jupyter {
         if String::from_utf8(output.stderr.clone()).unwrap().is_empty() {
             Ok(cleaned_result.join("\n") + "\n")
         } else {
-            return Err(SniprunError::RuntimeError(
+            Err(SniprunError::RuntimeError(
                 strip_ansi_escapes::strip_str(String::from_utf8_lossy(&output.stderr.clone()))
                     .lines()
                     .last()
@@ -201,7 +206,7 @@ impl ReplLikeInterpreter for Julia_jupyter {
                         &output.stderr,
                     )))
                     .to_owned(),
-            ));
+            ))
         }
     }
 }

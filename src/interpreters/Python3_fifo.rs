@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -40,9 +41,9 @@ impl Python3_fifo {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > 30 {
+            if start.elapsed().as_secs() > Python3_fifo::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
-                    "reached the 30s timeout",
+                    "reached the repl timeout",
                 )));
             }
 
@@ -69,9 +70,9 @@ impl Python3_fifo {
                     // info!("file : {:?}", contents);
                     if err_contents.contains(&end_mark) {
                         if let Some(index) = err_contents.rfind(&start_mark) {
-                            let mut err_to_display = err_contents
-                                [index + start_mark.len()..err_contents.len() - end_mark.len() - 1]
-                                .to_owned();
+                            let index_e = err_contents.rfind(&end_mark).unwrap();
+                            let mut err_to_display =
+                                err_contents[index + start_mark.len()..index_e].to_owned();
                             info!("err to display : {:?}", err_to_display);
                             if !err_to_display.trim().is_empty() {
                                 info!("err found");
@@ -100,9 +101,9 @@ impl Python3_fifo {
                     if out_contents.contains(&end_mark) {
                         info!("out found");
                         let index = out_contents.rfind(&start_mark).unwrap();
-                        return Ok(out_contents
-                            [index + start_mark.len()..out_contents.len() - end_mark.len() - 1]
-                            .to_owned());
+
+                        let index_e = out_contents.rfind(&end_mark).unwrap();
+                        return Ok(out_contents[index + start_mark.len()..index_e].to_owned());
                     }
                 }
             }
@@ -186,7 +187,7 @@ impl Python3_fifo {
             return true;
         }
         if line.contains(" as ") {
-            if let Some(name) = line.replace(',', " ").split(' ').last() {
+            if let Some(name) = line.replace(',', " ").split(' ').next_back() {
                 return code.contains(name);
             }
         }
@@ -226,7 +227,7 @@ impl Python3_fifo {
         let default_interpreter = String::from("python3");
         self.interpreter = default_interpreter;
         if let Some(used_interpreter) =
-            Python3_fifo::get_interpreter_option(&self.get_data(), "interpreter")
+            Python3_fifo::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -236,7 +237,7 @@ impl Python3_fifo {
 
         if let Ok(path) = env::current_dir() {
             if let Some(venv_array_config) =
-                Python3_fifo::get_interpreter_option(&self.get_data(), "venv")
+                Python3_fifo::get_interpreter_option(self.get_data(), "venv")
             {
                 if let Some(actual_vec_of_venv) = venv_array_config.as_array() {
                     for possible_venv in actual_vec_of_venv.iter() {
@@ -315,10 +316,12 @@ impl Interpreter for Python3_fifo {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Import
     }
@@ -416,6 +419,7 @@ impl ReplLikeInterpreter for Python3_fifo {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(Python3_fifo::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -434,13 +438,11 @@ impl ReplLikeInterpreter for Python3_fifo {
                 ),
             };
 
+            self.save_code("kernel_launched\nimport sys".to_owned());
             let pause = std::time::Duration::from_millis(100);
             std::thread::sleep(pause);
-            self.save_code("kernel_launched\nimport sys".to_owned());
-
-            Err(SniprunError::CustomError(
-                "Python3 kernel launched, re-run your snippet".to_owned(),
-            ))
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -514,6 +516,7 @@ impl ReplLikeInterpreter for Python3_fifo {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(Python3_fifo::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

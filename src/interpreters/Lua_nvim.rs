@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -48,10 +49,12 @@ impl Interpreter for Lua_nvim {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -119,6 +122,7 @@ impl Interpreter for Lua_nvim {
     fn execute(&mut self) -> Result<String, SniprunError> {
         let interpreter = Lua_nvim::get_interpreter_or(&self.data, "nvim");
         let output = Command::new(interpreter)
+            .current_dir(Lua_nvim::get_interpreter_desired_cwd(&self.data))
             .arg("--headless")
             .arg("-c")
             .arg(format!("luafile {}", &self.main_file_path))
@@ -129,7 +133,7 @@ impl Interpreter for Lua_nvim {
         info!("yay from lua interpreter - in another nvim instance");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Lua_nvim::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Lua_nvim::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()

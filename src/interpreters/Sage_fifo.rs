@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -34,10 +35,16 @@ impl Sage_fifo {
         let mut err_contents = String::new();
 
         let mut pause = std::time::Duration::from_millis(50);
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         loop {
             std::thread::sleep(pause);
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
+
+            if start.elapsed().as_secs() > Sage_fifo::get_repl_timeout(&self.data) {
+                return Err(SniprunError::InterpreterLimitationError(String::from(
+                    "reached the repl timeout",
+                )));
+            }
 
             //check for stderr first
             if let Ok(mut file) = std::fs::File::open(&err_path) {
@@ -49,9 +56,9 @@ impl Sage_fifo {
                     // info!("file : {:?}", contents);
                     if err_contents.contains(&end_mark) {
                         if let Some(index) = err_contents.rfind(&start_mark) {
-                            let err_to_display = err_contents
-                                [index + start_mark.len()..err_contents.len() - end_mark.len() - 1]
-                                .to_owned();
+                            let index_e = err_contents.rfind(&end_mark).unwrap();
+                            let err_to_display =
+                                err_contents[index + start_mark.len()..index_e].to_owned();
                             info!("err to display : {:?}", err_to_display);
                             if !err_to_display.trim().is_empty() {
                                 info!("err found");
@@ -196,7 +203,7 @@ impl Sage_fifo {
             return true;
         }
         if line.contains(" as ") {
-            if let Some(name) = line.split(' ').last() {
+            if let Some(name) = line.split(' ').next_back() {
                 return code.contains(name);
             }
         }
@@ -218,7 +225,7 @@ impl Sage_fifo {
         let default_interpreter = String::from("sage");
         self.interpreter = default_interpreter;
         if let Some(used_interpreter) =
-            Sage_fifo::get_interpreter_option(&self.get_data(), "interpreter")
+            Sage_fifo::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -226,7 +233,7 @@ impl Sage_fifo {
             }
         }
         if let Some(user_sage_config) =
-            Sage_fifo::get_interpreter_option(&self.get_data(), "interpreter")
+            Sage_fifo::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(_user_sage_config_str) = user_sage_config.as_str() {
                 info!("Using user sage config");
@@ -289,14 +296,16 @@ impl Interpreter for Sage_fifo {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
-    }
-
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Import
     }
 
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
+    }
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn default_for_filetype() -> bool {
         true
     }
@@ -394,13 +403,11 @@ impl ReplLikeInterpreter for Sage_fifo {
                 }
             };
 
+            self.save_code("kernel_launched\n".to_owned());
             let pause = std::time::Duration::from_millis(100);
             std::thread::sleep(pause);
-            self.save_code("kernel_launched\n".to_string());
-
-            Err(SniprunError::CustomError(
-                "Sage kernel launched, re-run your snippet".to_owned(),
-            ))
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -445,6 +452,7 @@ impl ReplLikeInterpreter for Sage_fifo {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(Sage_fifo::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

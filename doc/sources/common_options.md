@@ -41,8 +41,8 @@ require('sniprun').setup({
             some_specific_option = value,
             some_other_option = other_value,
         }
-    }
-  }, 
+    },
+    -- ...
 })
 EOF
 ```
@@ -65,7 +65,7 @@ require('sniprun').setup({
                                             --# the hint is available for every interpreter
                                             --# but may not be always respected
         }
-  }, 
+    }, 
 })
 EOF
 ```
@@ -75,7 +75,7 @@ EOF
 
 The `use_on_filetypes` key is implicitely an option of every interpreter
 
-```
+```lua
 interpreter_options = {
     GFM_original = {
         use_on_filetypes = {"markdown.pandoc", "rstudio" }
@@ -83,11 +83,35 @@ interpreter_options = {
 }
 ```
 
+### The "repl_timeout" key
+
+REPL-enabled interpreters _sometime_ have mechanisms in place to limit how long a snippet of code
+can run. Be it because an infinite loop was (unintentionally?) run, or "something happened" which
+can make the interpreter unsuable in the meantime, limiting that 'meantime' is generally a good idea.
+
+By default, this timeout is set to 30s, after which, if no result was produced, the message:
+`Interpreter limitation: reached the repl timeout` is returned (as an error).
+
+Note that running an infinite loop may still cause the underlying REPL of the language (in the
+cases where one is used) to be stuck. The only purpose of this timeout is actually to warn the user
+something is taking 'probably' too long. This is why after getting such an error, it's better to
+run a `SnipReset` before trying to continue using the interpreter.
+
+This key is customizable per-interpreter, though only some (most) REPL-enabled interpreter will respect it:
+
+```lua
+interpreter_options = {
+  Python3_fifo = {
+    repl_timeout = 900, -- 900s = 15min max runtime
+  },
+```
+
+
 ### The "error_truncate" key
 
 Also available for every interpreter if you don't like how sniprun truncate some outputs by default (auto), but it will not have an effect on all interpreters.
 
-```
+```lua
 interpreter_options = {
     Python3_original = {
         error_truncate = "auto"     --# Truncate runtime errors 'long', 'short' or 'auto'
@@ -101,7 +125,7 @@ Almost every interpreter support either the "interpreter" or "compiler" key even
 
 example:
 
-```
+```lua
 interpreter_options = {
     Python3_original = {
         interpreter = "python3.9"
@@ -109,7 +133,7 @@ interpreter_options = {
     Rust_original = {
         compiler = "/home/user/bin/rustc-patched -Zlocation-detail=none"
     }
-}, 
+}
 ```
 
 You can see what interpreters/compilers are being used at any time by watching sniprun's log for the line
@@ -120,6 +144,24 @@ sniprun internally expect, or be straight out incompatible with the formers. Be 
 
 Exceptions:
  - Scala_original has both interpreter and compiler keys that should be set consistently with each other
- - *_jupyter, Generic, GFM_original, Orgmode_original, and Neorg_original do not support any of these keys, as they rely on the interpreter for the code's block language.
+ - *_jupyter, Generic, GFM_original, Orgmode_original, and Neorg_original do not support any of these keys,
+   as they rely on the underlying interpreter for the code's block language and use its configuration.
 
 
+### The "cwd" key
+
+This key is supported by all interpreters and allows setting a specific
+current working directory for all sub-processes (build, run, REPL processes...).
+
+This key overwrites the global 'cwd' config field on a per-interpreter basis, which
+itself defaults to the Neovim's current working directory.
+
+If set, the pointed location must exist prior to running anything.
+
+```lua
+interpreter_options = {
+    Python3_original = {
+        cwd = "/tmp/python_projects"
+    }
+}
+```

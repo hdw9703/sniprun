@@ -1,36 +1,31 @@
 #![allow(clippy::zombie_processes)]
+
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
-pub struct Clojure_fifo {
+pub struct PHP_original {
     support_level: SupportLevel,
     data: DataHolder,
     code: String,
+    interpreter: String,
     main_file_path: String,
     cache_dir: String,
-
-    interpreter: String,
-    interpreter_repl: String,
     current_output_id: u32,
 }
-
-impl Clojure_fifo {
+impl PHP_original {
     fn wait_out_file(
         &self,
         out_path: String,
         err_path: String,
         id: u32,
     ) -> Result<String, SniprunError> {
-        //extra nils come from the stdout & stderr mark prints themselves
-        let end_mark_ok = String::from("nil\nsniprun_finished_id=") + &id.to_string() + "\nnil";
-        let start_mark_ok = String::from("nil\nsniprun_started_id=") + &id.to_string() + "\nnil";
-        let end_mark_err = String::from("sniprun_finished_id=") + &id.to_string();
-        let start_mark_err = String::from("sniprun_started_id=") + &id.to_string();
+        let end_mark = String::from("sniprun_finished_id=") + &id.to_string();
+        let start_mark = String::from("sniprun_started_id=") + &id.to_string();
 
         info!(
             "searching for things between {:?} and {:?}",
-            start_mark_ok, end_mark_ok
+            start_mark, end_mark
         );
 
         let mut out_contents = String::new();
@@ -43,7 +38,7 @@ impl Clojure_fifo {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > Clojure_fifo::get_repl_timeout(&self.data) {
+            if start.elapsed().as_secs() > PHP_original::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
                     "reached the repl timeout",
                 )));
@@ -52,24 +47,16 @@ impl Clojure_fifo {
             //check for stderr first
             if let Ok(mut file) = std::fs::File::open(&err_path) {
                 info!("errfile exists");
-                out_contents.clear();
-                let res = file.read_to_string(&mut err_contents);
-                if res.is_ok() {
-                    info!("errfile could be read : {:?}", err_contents);
-                    // info!("file : {:?}", contents);
-                    if err_contents.contains(&end_mark_err) {
-                        if let Some(index) = err_contents.rfind(&start_mark_err) {
-                            let index_e = err_contents.rfind(&end_mark_err).unwrap();
-                            let mut err_to_display =
-                                err_contents[index + start_mark_err.len()..index_e].to_owned();
+                err_contents.clear();
+                if file.read_to_string(&mut err_contents).is_ok() {
+                    // info!("errfile could be read : {:?}", err_contents);
+                    if let Some(end_index) = err_contents.rfind(&end_mark) {
+                        if let Some(index) = err_contents.rfind(&start_mark) {
+                            let err_to_display =
+                                err_contents[index + start_mark.len()..end_index].to_owned();
                             info!("err to display : {:?}", err_to_display);
                             if !err_to_display.trim().is_empty() {
                                 info!("err found");
-                                let mut err_to_display_vec =
-                                    err_to_display.lines().collect::<Vec<&str>>();
-                                err_to_display_vec.dedup();
-                                err_to_display = err_to_display_vec.join("\n");
-
                                 return Err(SniprunError::RuntimeError(err_to_display));
                             }
                         }
@@ -81,15 +68,22 @@ impl Clojure_fifo {
             if let Ok(mut file) = std::fs::File::open(&out_path) {
                 info!("file exists");
                 out_contents.clear();
-                let res = file.read_to_string(&mut out_contents);
-                if res.is_ok() {
-                    info!("file could be read : {:?}", out_contents);
-                    // info!("file : {:?}", contents);
-                    if out_contents.contains(&end_mark_ok) {
+                if file.read_to_string(&mut out_contents).is_ok() {
+                    // info!("file could be read : {:?}", out_contents);
+                    if out_contents.contains(&end_mark) {
                         info!("out found");
-                        let index = out_contents.rfind(&start_mark_ok).unwrap();
-                        let index_e = out_contents.rfind(&end_mark_ok).unwrap();
-                        return Ok(out_contents[index + start_mark_ok.len()..index_e].to_owned());
+                        // NOTE: Because PHP writes the prompt to stdout, we filter it out here.
+                        // Using the cli.pager ini setting we could circumvent this, but that would require
+                        // a custom solution to launch the interpreter.
+                        let lines = out_contents
+                            .lines()
+                            .skip_while(|l| l != &start_mark)
+                            .skip(1)
+                            .take_while(|l| l != &end_mark)
+                            // remove the php prompt lines
+                            .filter(|l| !l.starts_with("php > "))
+                            .collect::<Vec<&str>>();
+                        return Ok(lines.join("\n"));
                     }
                 }
             }
@@ -97,79 +91,64 @@ impl Clojure_fifo {
             info!("not found yet");
         }
     }
-
     fn fetch_config(&mut self) {
-        let default_interpreter_repl =
-            String::from("clojure -e \"(clojure.main/repl :prompt (defn f[] (\"\")) )\"");
-        let default_interpreter = String::from("clojure");
-        self.interpreter = default_interpreter;
-        self.interpreter_repl = default_interpreter_repl;
-        if let Some(used_interpreter) =
-            Clojure_fifo::get_interpreter_option(self.get_data(), "interpreter")
-        {
-            if let Some(interpreter_string) = used_interpreter.as_str() {
-                info!("Using custom interpreter: {}", interpreter_string);
-                self.interpreter = interpreter_string.to_string();
+        let mut interpreter: String = "php".to_owned();
+
+        let data = self.get_data();
+        if let Some(interpreter_val) = PHP_original::get_interpreter_option(data, "interpreter") {
+            if let Some(interpreter_string) = interpreter_val.as_str() {
+                interpreter = interpreter_string.to_owned();
             }
         }
-        if let Some(used_interpreter_repl) =
-            Clojure_fifo::get_interpreter_option(self.get_data(), "interpreter_repl")
-        {
-            if let Some(interpreter_string_repl) = used_interpreter_repl.as_str() {
-                info!("Using custom interpreter: {}", interpreter_string_repl);
-                self.interpreter_repl = interpreter_string_repl.to_string();
-            }
-        }
+        self.interpreter = interpreter;
     }
 }
 
-impl Interpreter for Clojure_fifo {
-    fn new_with_level(data: DataHolder, level: SupportLevel) -> Box<Clojure_fifo> {
+impl Interpreter for PHP_original {
+    fn new_with_level(data: DataHolder, level: SupportLevel) -> Box<PHP_original> {
         //create a subfolder in the cache folder
-        let rwd = data.work_dir.clone() + "/clojure_fifo";
-        let mut builder = DirBuilder::new();
-        builder.recursive(true);
-        builder
+        let rwd = data.work_dir.clone() + "/php_original";
+
+        DirBuilder::new()
+            .recursive(true)
             .create(&rwd)
-            .expect("Could not create directory for clojure-fifo");
+            .expect("Could not create directory for PHP_original");
 
-        //pre-create string pointing to main file's and binary's path
-        let mfp = rwd.clone() + "/main.clj";
+        // Main file path
+        let mfp = rwd.clone() + "/main.php";
 
-        Box::new(Clojure_fifo {
-            cache_dir: rwd + "/" + &Clojure_fifo::get_nvim_pid(&data),
-            data,
+        Box::new(PHP_original {
             support_level: level,
             code: String::from(""),
             main_file_path: mfp,
+            cache_dir: rwd + "/" + &PHP_original::get_nvim_pid(&data),
+            interpreter: String::from(""),
             current_output_id: 0,
-            interpreter: String::new(),
-            interpreter_repl: String::new(),
+            data,
         })
     }
 
+    fn check_cli_args(&self) -> Result<(), SniprunError> {
+        Ok(())
+    }
+
     fn get_name() -> String {
-        String::from("Clojure_fifo")
+        String::from("PHP_original")
+    }
+
+    fn behave_repl_like_default() -> bool {
+        false
+    }
+    fn has_repl_capability() -> bool {
+        true
     }
 
     fn default_for_filetype() -> bool {
         true
     }
 
-    fn behave_repl_like_default() -> bool {
-        false
-    }
-
-    fn has_repl_capability() -> bool {
-        true
-    }
-
     fn get_supported_languages() -> Vec<String> {
-        vec![
-            String::from("Clojure"),
-            String::from("clojure"),
-            String::from("clj"),
-        ]
+        vec![String::from("php"), String::from("PHP")]
     }
 
     fn get_current_level(&self) -> SupportLevel {
@@ -178,28 +157,24 @@ impl Interpreter for Clojure_fifo {
     fn set_current_level(&mut self, level: SupportLevel) {
         self.support_level = level;
     }
-
     fn get_data_mut(&mut self) -> &mut DataHolder {
         &mut self.data
     }
     fn get_data(&self) -> &DataHolder {
         &self.data
     }
+
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
 
     fn fetch_code(&mut self) -> Result<(), SniprunError> {
         self.fetch_config();
-        if !self
-            .data
-            .current_bloc
-            .replace(&[' ', '\t', '\n', '\r'][..], "")
-            .is_empty()
-            && self.get_current_level() >= SupportLevel::Bloc
+        if self.get_current_level() >= SupportLevel::Bloc
+            && self.data.current_bloc.chars().any(|c| !c.is_whitespace())
         {
             self.code.clone_from(&self.data.current_bloc);
-        } else if !self.data.current_line.replace(' ', "").is_empty()
+        } else if self.data.current_line.chars().any(|c| !c.is_whitespace())
             && self.get_current_level() >= SupportLevel::Line
         {
             self.code.clone_from(&self.data.current_line);
@@ -210,31 +185,39 @@ impl Interpreter for Clojure_fifo {
         Ok(())
     }
     fn add_boilerplate(&mut self) -> Result<(), SniprunError> {
+        // Add <?php tag if '<?' or '<?php' not present
+        if !self.code.trim_start().starts_with("<?") {
+            let mut new_code = String::from("<?php\n\n");
+            new_code.push_str(&self.code);
+            self.code = new_code;
+        }
         Ok(())
     }
     fn build(&mut self) -> Result<(), SniprunError> {
-        write(&self.main_file_path, &self.code).expect("Unable to write to file for clojure_fifo");
+        write(&self.main_file_path, &self.code).expect("Unable to write to file for PHP_original");
         Ok(())
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
-        let output = Command::new(self.interpreter.split_whitespace().next().unwrap())
-            .current_dir(Clojure_fifo::get_interpreter_desired_cwd(&self.data))
-            .args(self.interpreter.split_whitespace().skip(1))
+        info!(
+            "Executing PHP_original with interpreter: {:?}",
+            self.interpreter
+        );
+        let output = Command::new(&self.interpreter)
+            .current_dir(PHP_original::get_interpreter_desired_cwd(&self.data))
             .arg(&self.main_file_path)
             .args(&self.get_data().cli_args)
             .output()
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Clojure_fifo::error_truncate(self.get_data()) == ErrTruncate::Short {
+        } else if PHP_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
-                String::from_utf8(output.stderr)
+                String::from_utf8(output.stderr.clone())
                     .unwrap()
                     .lines()
-                    .filter(|l| !l.to_lowercase().contains("warning"))
-                    .take(2)
-                    .collect::<Vec<&str>>()
-                    .join("\n"),
+                    .last()
+                    .unwrap_or(&String::from_utf8(output.stderr).unwrap())
+                    .to_owned(),
             ))
         } else {
             Err(SniprunError::RuntimeError(
@@ -243,12 +226,11 @@ impl Interpreter for Clojure_fifo {
         }
     }
 }
-
-impl ReplLikeInterpreter for Clojure_fifo {
+impl ReplLikeInterpreter for PHP_original {
     fn fetch_code_repl(&mut self) -> Result<(), SniprunError> {
         if !self.read_previous_code().is_empty() {
             // nothing to do, kernel already running
-            info!("clojure kernel already running");
+            info!("PHP kernel already running");
 
             if let Some(id) = self.get_pid() {
                 // there is a race condition here but honestly you'd have to
@@ -279,21 +261,20 @@ impl ReplLikeInterpreter for Clojure_fifo {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
-                        .current_dir(Clojure_fifo::get_interpreter_desired_cwd(&self.data))
-                        .args(&[
-                            init_repl_cmd,
-                            self.cache_dir.clone(),
-                            Clojure_fifo::get_nvim_pid(&self.data),
-                            self.interpreter_repl.clone(),
-                        ])
+                        .current_dir(PHP_original::get_interpreter_desired_cwd(&self.data))
+                        .arg(init_repl_cmd)
+                        .arg(&self.cache_dir)
+                        .arg(PHP_original::get_nvim_pid(&self.data))
+                        .arg(&self.interpreter)
+                        .arg("-a")
                         .output()
                         .unwrap();
 
-                    return Err(SniprunError::CustomError("clojure REPL exited".to_owned()));
+                    return Err(SniprunError::CustomError("PHP REPL exited".to_owned()));
                 }
                 Ok(Fork::Parent(_)) => {}
                 Err(_) => info!(
-                    "Clojure_fifo could not fork itself to the background to launch the kernel"
+                    "PHP_original could not fork itself to the background to launch the kernel"
                 ),
             };
 
@@ -304,27 +285,6 @@ impl ReplLikeInterpreter for Clojure_fifo {
             Err(SniprunError::ReRunRanges(v))
         }
     }
-
-    fn add_boilerplate_repl(&mut self) -> Result<(), SniprunError> {
-        self.add_boilerplate()?;
-        let start_mark = String::from("\n(println \"sniprun_started_id=")
-            + &self.current_output_id.to_string()
-            + "\")\n";
-        let end_mark = String::from("\n(println \"sniprun_finished_id=")
-            + &self.current_output_id.to_string()
-            + "\")\n";
-        let start_mark_err = String::from("\n(.println *err* \"sniprun_started_id=")
-            + &self.current_output_id.to_string()
-            + "\")\n";
-        let end_mark_err = String::from("\n(.println *err* \"sniprun_finished_id=")
-            + &self.current_output_id.to_string()
-            + "\")\n";
-
-        let all_code = String::from("\n") + &self.code + "\n\n";
-        self.code = start_mark_err + &start_mark + &all_code + &end_mark_err + &end_mark;
-        Ok(())
-    }
-
     fn build_repl(&mut self) -> Result<(), SniprunError> {
         self.build()
     }
@@ -333,7 +293,7 @@ impl ReplLikeInterpreter for Clojure_fifo {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
-            .current_dir(Clojure_fifo::get_interpreter_desired_cwd(&self.data))
+            .current_dir(PHP_original::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();
@@ -346,20 +306,59 @@ impl ReplLikeInterpreter for Clojure_fifo {
         info!("outfile : {:?}", outfile);
         self.wait_out_file(outfile, errfile, self.current_output_id)
     }
+    fn add_boilerplate_repl(&mut self) -> Result<(), SniprunError> {
+        let start_mark = String::from("\n;print(\"sniprun_started_id=")
+            + &self.current_output_id.to_string()
+            + "\\n\");\n";
+        let end_mark = String::from("\n;print(\"\\nsniprun_finished_id=")
+            + &self.current_output_id.to_string()
+            + "\\n\");\n";
+        let start_mark_err = String::from("\n;fwrite(STDERR, \"sniprun_started_id=")
+            + &self.current_output_id.to_string()
+            + "\\n\");\n";
+        let end_mark_err = String::from("\n;fwrite(STDERR, \"\\nsniprun_finished_id=")
+            + &self.current_output_id.to_string()
+            + "\\n\");\n";
+
+        let all_code = String::from("\n") + &self.code + "\n\n";
+        self.code = start_mark + &start_mark_err + &all_code + &end_mark + &end_mark_err;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-mod test_clojure_fifo {
+mod test_php_original {
     use super::*;
+    use crate::test_main::*;
+    use crate::*;
 
     #[test]
     fn simple_print() {
         let mut data = DataHolder::new();
-        data.current_bloc = String::from("(println \"lol\")");
-        let mut interpreter = Clojure_fifo::new(data);
+        data.current_bloc = String::from("echo \"Hello World\n\";");
+        let mut interpreter = PHP_original::new(data);
         let res = interpreter.run_at_level(SupportLevel::Bloc);
+
         // should panic if not an Ok()
         let string_result = res.unwrap();
-        assert_eq!(string_result, "lol\n");
+        assert_eq!(string_result, "Hello World\n");
+    }
+
+    #[allow(dead_code)]
+    fn test_repl() {
+        let mut event_handler = fake_event();
+        event_handler.fill_data(&fake_msgpack());
+        event_handler.data.filetype = String::from("php");
+        event_handler.data.current_bloc = String::from("$a = 5;\n$b = 6;");
+        event_handler.data.repl_enabled = vec![String::from("PHP_original")];
+        event_handler.data.sniprun_root_dir = String::from(".");
+        //run the launcher (that selects, init and run an interpreter)
+        let launcher = launcher::Launcher::new(event_handler.data.clone());
+        let _result = launcher.select_and_run();
+
+        event_handler.data.current_bloc = String::from("echo $a + $b;");
+        let launcher = launcher::Launcher::new(event_handler.data.clone());
+        let result = launcher.select_and_run();
+        assert!(result.is_ok());
     }
 }

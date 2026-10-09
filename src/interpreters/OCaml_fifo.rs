@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -39,9 +40,9 @@ impl OCaml_fifo {
             pause = pause.saturating_add(std::time::Duration::from_millis(50));
 
             // timeout after 30s if no result found
-            if start.elapsed().as_secs() > 30 {
+            if start.elapsed().as_secs() > OCaml_fifo::get_repl_timeout(&self.data) {
                 return Err(SniprunError::InterpreterLimitationError(String::from(
-                    "reached the 30s timeout",
+                    "reached the repl timeout",
                 )));
             }
 
@@ -59,13 +60,13 @@ impl OCaml_fifo {
                     if out_contents.contains(&end_mark_ok) {
                         info!("out found");
                         let index = out_contents.rfind(&start_mark_ok).unwrap();
-                        let output = out_contents[index + start_mark_ok.len()
-                            ..out_contents.len() - end_mark_ok.len() - 1]
-                            .to_owned();
+
+                        let index_e = out_contents.rfind(&end_mark_ok).unwrap();
+                        let output = &out_contents[index + start_mark_ok.len()..index_e].to_owned();
                         if output.trim().contains("Error: ") {
-                            return Err(SniprunError::RuntimeError(output));
+                            return Err(SniprunError::RuntimeError(output.to_string()));
                         } else {
-                            return Ok(output);
+                            return Ok(output.to_string());
                         }
                     }
                 }
@@ -81,7 +82,7 @@ impl OCaml_fifo {
         self.interpreter = default_interpreter;
         self.interpreter_repl = default_interpreter_repl;
         if let Some(used_interpreter) =
-            OCaml_fifo::get_interpreter_option(&self.get_data(), "interpreter")
+            OCaml_fifo::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -89,7 +90,7 @@ impl OCaml_fifo {
             }
         }
         if let Some(used_interpreter_repl) =
-            OCaml_fifo::get_interpreter_option(&self.get_data(), "interpreter_repl")
+            OCaml_fifo::get_interpreter_option(self.get_data(), "interpreter_repl")
         {
             if let Some(interpreter_string_repl) = used_interpreter_repl.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string_repl);
@@ -156,10 +157,12 @@ impl Interpreter for OCaml_fifo {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -193,13 +196,14 @@ impl Interpreter for OCaml_fifo {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new(self.interpreter.clone())
+            .current_dir(OCaml_fifo::get_interpreter_desired_cwd(&self.data))
             .arg(&self.main_file_path)
             .args(&self.get_data().cli_args)
             .output()
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if OCaml_fifo::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if OCaml_fifo::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr)
                     .unwrap()
@@ -252,6 +256,7 @@ impl ReplLikeInterpreter for OCaml_fifo {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(OCaml_fifo::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -270,13 +275,10 @@ impl ReplLikeInterpreter for OCaml_fifo {
             };
 
             self.save_code("kernel_launched\n".to_owned());
-
-            let pause = std::time::Duration::from_millis(300);
+            let pause = std::time::Duration::from_millis(100);
             std::thread::sleep(pause);
-
-            Err(SniprunError::CustomError(
-                "OCaml interactive kernel launched, re-run your snippet".to_owned(),
-            ))
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -308,6 +310,7 @@ impl ReplLikeInterpreter for OCaml_fifo {
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         info!("running launcher {}", send_repl_cmd);
         let res = Command::new(send_repl_cmd)
+            .current_dir(OCaml_fifo::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn();

@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -49,14 +50,16 @@ impl Julia_original {
         }
 
         let index = contents.rfind(&start_mark).unwrap();
-        Ok(contents[index + start_mark.len()..contents.len() - end_mark.len() - 1].to_owned())
+
+        let index_e = contents.rfind(&end_mark).unwrap();
+        Ok(contents[index + start_mark.len()..index_e].to_owned())
     }
 
     fn fetch_config(&mut self) {
         let default_interpreter = String::from("julia");
         self.interpreter = default_interpreter;
         if let Some(used_interpreter) =
-            Julia_original::get_interpreter_option(&self.get_data(), "interpreter")
+            Julia_original::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -65,7 +68,7 @@ impl Julia_original {
         }
 
         if let Some(project_opt) =
-            Julia_original::get_interpreter_option(&self.get_data(), "project")
+            Julia_original::get_interpreter_option(self.get_data(), "project")
         {
             if let Some(mut project_str) = project_opt.as_str() {
                 if project_str == "." {
@@ -138,10 +141,12 @@ impl Interpreter for Julia_original {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -183,6 +188,7 @@ impl Interpreter for Julia_original {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new(self.interpreter.split_whitespace().next().unwrap())
+            .current_dir(Julia_original::get_interpreter_desired_cwd(&self.data))
             .args(self.interpreter.split_whitespace().skip(1))
             .args(&self.interpreter_args)
             .arg(&self.main_file_path)
@@ -191,7 +197,7 @@ impl Interpreter for Julia_original {
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Julia_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Julia_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()
@@ -240,6 +246,7 @@ impl ReplLikeInterpreter for Julia_original {
             match daemon() {
                 Ok(Fork::Child) => {
                     let _res = Command::new("bash")
+                        .current_dir(Julia_original::get_interpreter_desired_cwd(&self.data))
                         .args(&[
                             init_repl_cmd,
                             self.cache_dir.clone(),
@@ -258,13 +265,11 @@ impl ReplLikeInterpreter for Julia_original {
                 ),
             };
 
+            self.save_code("kernel_launched\n".to_owned());
             let pause = std::time::Duration::from_millis(100);
             std::thread::sleep(pause);
-            self.save_code("kernel_launched".to_owned());
-
-            Err(SniprunError::CustomError(
-                "Julia kernel launched, re-run your snippet".to_owned(),
-            ))
+            let v = vec![(self.data.range[0] as usize, self.data.range[1] as usize)];
+            Err(SniprunError::ReRunRanges(v))
         }
     }
 
@@ -296,6 +301,7 @@ impl ReplLikeInterpreter for Julia_original {
         info!("running launcher");
         let send_repl_cmd = self.data.sniprun_root_dir.clone() + "/ressources/launcher_repl.sh";
         let res = Command::new(send_repl_cmd)
+            .current_dir(Julia_original::get_interpreter_desired_cwd(&self.data))
             .arg(self.main_file_path.clone())
             .arg(self.cache_dir.clone() + "/fifo_repl/pipe_in")
             .spawn()

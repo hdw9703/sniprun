@@ -60,14 +60,14 @@ impl Python3_original {
             if line.trim().starts_with("import ") || line.trim().starts_with("from ") {
                 //basic selection
                 if line.contains('(') {
-                    self.imports = self.imports.clone() + "\n" + line;
+                    self.imports = self.imports.clone() + "\n" + line.trim();
                     in_import_list = true;
                     continue;
                 }
                 if self.module_used(line, &self.code) {
                     // embed in try catch blocs in case uneeded module is unavailable
                     let line = unindent(line);
-                    self.imports = self.imports.clone() + "\n" + &line;
+                    self.imports = self.imports.clone() + "\n" + line.trim();
                 }
             }
         }
@@ -83,7 +83,7 @@ impl Python3_original {
             return true;
         }
         if line.contains(" as ") {
-            if let Some(name) = line.split(' ').last() {
+            if let Some(name) = line.split(' ').next_back() {
                 return code.contains(name);
             }
         }
@@ -104,7 +104,7 @@ impl Python3_original {
         let default_interpreter = String::from("python3");
         self.interpreter = default_interpreter;
         if let Some(used_interpreter) =
-            Python3_original::get_interpreter_option(&self.get_data(), "interpreter")
+            Python3_original::get_interpreter_option(self.get_data(), "interpreter")
         {
             if let Some(interpreter_string) = used_interpreter.as_str() {
                 info!("Using custom interpreter: {}", interpreter_string);
@@ -114,7 +114,7 @@ impl Python3_original {
 
         if let Ok(path) = env::current_dir() {
             if let Some(venv_array_config) =
-                Python3_original::get_interpreter_option(&self.get_data(), "venv")
+                Python3_original::get_interpreter_option(self.get_data(), "venv")
             {
                 if let Some(actual_vec_of_venv) = venv_array_config.as_array() {
                     for possible_venv in actual_vec_of_venv.iter() {
@@ -199,10 +199,12 @@ impl Interpreter for Python3_original {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Import
     }
@@ -259,6 +261,7 @@ impl Interpreter for Python3_original {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new(self.interpreter.split_whitespace().next().unwrap())
+            .current_dir(Python3_original::get_interpreter_desired_cwd(&self.data))
             .args(self.interpreter.split_whitespace().skip(1))
             .arg(&self.main_file_path)
             .args(&self.get_data().cli_args)
@@ -266,7 +269,7 @@ impl Interpreter for Python3_original {
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Python3_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Python3_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()

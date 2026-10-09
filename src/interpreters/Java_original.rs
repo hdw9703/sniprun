@@ -55,10 +55,12 @@ impl Interpreter for Java_original {
         true
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Bloc
     }
@@ -105,6 +107,7 @@ impl Interpreter for Java_original {
         let compiler = Java_original::get_compiler_or(&self.data, "javac");
         //compile it (to the bin_path that arleady points to the rigth path)
         let output = Command::new(compiler.split_whitespace().next().unwrap())
+            .current_dir(Java_original::get_interpreter_desired_cwd(&self.data))
             .args(compiler.split_whitespace().skip(1))
             .arg("-d")
             .arg(&self.java_work_dir)
@@ -123,6 +126,7 @@ impl Interpreter for Java_original {
     fn execute(&mut self) -> Result<String, SniprunError> {
         //run th binary and get the std output (or stderr)
         let output = Command::new("java")
+            .current_dir(Java_original::get_interpreter_desired_cwd(&self.data))
             .arg("-cp")
             .arg(&self.java_work_dir)
             .arg(&self.bin_name)
@@ -130,7 +134,7 @@ impl Interpreter for Java_original {
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Java_original::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Java_original::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()

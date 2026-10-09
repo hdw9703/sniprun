@@ -1,3 +1,4 @@
+#![allow(clippy::zombie_processes)]
 use crate::interpreters::import::*;
 
 #[derive(Clone)]
@@ -70,7 +71,7 @@ impl Python3_jupyter {
             return true;
         }
         if line.contains(" as ") {
-            if let Some(name) = line.split(' ').last() {
+            if let Some(name) = line.split(' ').next_back() {
                 return code.contains(name);
             }
         }
@@ -163,10 +164,12 @@ impl Interpreter for Python3_jupyter {
         self.support_level = level;
     }
 
-    fn get_data(&self) -> DataHolder {
-        self.data.clone()
+    fn get_data_mut(&mut self) -> &mut DataHolder {
+        &mut self.data
     }
-
+    fn get_data(&self) -> &DataHolder {
+        &self.data
+    }
     fn get_max_support_level() -> SupportLevel {
         SupportLevel::Import
     }
@@ -214,12 +217,13 @@ impl Interpreter for Python3_jupyter {
     }
     fn execute(&mut self) -> Result<String, SniprunError> {
         let output = Command::new("python3")
+            .current_dir(Python3_jupyter::get_interpreter_desired_cwd(&self.data))
             .arg(&self.main_file_path)
             .output()
             .expect("Unable to start process");
         if output.status.success() {
             Ok(String::from_utf8(output.stdout).unwrap())
-        } else if Python3_jupyter::error_truncate(&self.get_data()) == ErrTruncate::Short {
+        } else if Python3_jupyter::error_truncate(self.get_data()) == ErrTruncate::Short {
             Err(SniprunError::RuntimeError(
                 String::from_utf8(output.stderr.clone())
                     .unwrap()
@@ -246,6 +250,7 @@ impl ReplLikeInterpreter for Python3_jupyter {
             //this will be cleared by the SnipReplMemoryClean command
             let _res = std::fs::remove_file(&self.kernel_file);
             let _res = Command::new("jupyter-kernel")
+                .current_dir(Python3_jupyter::get_interpreter_desired_cwd(&self.data))
                 .arg("--kernel=python3")
                 .arg(String::from("--KernelManager.connection_file=") + &self.kernel_file)
                 .spawn();
@@ -335,6 +340,7 @@ impl ReplLikeInterpreter for Python3_jupyter {
         self.wait_on_kernel()?;
 
         let output = Command::new("sh")
+            .current_dir(Python3_jupyter::get_interpreter_desired_cwd(&self.data))
             .arg(&self.launcher_path)
             .output()
             .expect("Unable to start process");
@@ -354,7 +360,7 @@ impl ReplLikeInterpreter for Python3_jupyter {
         if String::from_utf8(output.stderr.clone()).unwrap().is_empty() {
             Ok(cleaned_result.join("\n") + "\n")
         } else {
-            return Err(SniprunError::RuntimeError(
+            Err(SniprunError::RuntimeError(
                 strip_ansi_escapes::strip_str(String::from_utf8_lossy(&output.stderr.clone()))
                     .lines()
                     .last()
@@ -362,7 +368,7 @@ impl ReplLikeInterpreter for Python3_jupyter {
                         &output.stderr,
                     )))
                     .to_owned(),
-            ));
+            ))
         }
     }
 }
